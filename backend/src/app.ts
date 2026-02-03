@@ -12,6 +12,9 @@ import { getConfig } from './common/config/index'
 import { errorHandler, requestLogger } from './common/middleware/index'
 import { healthRouter } from './modules/health/index'
 import { authRouter } from './modules/auth/index'
+import { projectsRouter } from './modules/projects/index'
+import { productsRouter } from './modules/products/index'
+import { versionsRouter } from './modules/versions/index'
 
 export function createApp(): Express {
   const app = express()
@@ -75,11 +78,11 @@ export function createApp(): Express {
   // Routes
   app.use('/api/health', healthRouter)
   app.use('/api/auth', authRouter)
+  app.use('/api/projects', projectsRouter)
+  app.use('/api/products', productsRouter)
+  app.use('/api/versions', versionsRouter)
 
   // TODO: Add module routes here as they are implemented
-  // app.use('/api/projects', projectsRouter)
-  // app.use('/api/products', productsRouter)
-  // app.use('/api/versions', versionsRouter)
   // app.use('/api/assets', assetsRouter)
   // app.use('/api/shares', sharesRouter)
   // app.use('/api/public', publicRouter)

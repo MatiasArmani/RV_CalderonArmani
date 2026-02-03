@@ -1,7 +1,8 @@
 'use client'
 
 import { useEffect } from 'react'
-import { useRouter } from 'next/navigation'
+import { useRouter, usePathname } from 'next/navigation'
+import Link from 'next/link'
 import { useAuth } from '@/lib/auth'
 
 export default function AdminLayout({
@@ -10,7 +11,13 @@ export default function AdminLayout({
   children: React.ReactNode
 }) {
   const router = useRouter()
+  const pathname = usePathname()
   const { isAuthenticated, isLoading, user, company, logout } = useAuth()
+
+  const navigation = [
+    { name: 'Dashboard', href: '/dashboard' },
+    { name: 'Proyectos', href: '/projects' },
+  ]
 
   // Redirect to login if not authenticated
   useEffect(() => {
@@ -39,15 +46,33 @@ export default function AdminLayout({
       <header className="bg-white shadow-sm">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="flex justify-between items-center py-4">
-            <div className="flex items-center space-x-4">
-              <h1 className="text-xl font-semibold text-gray-900">
+            <div className="flex items-center space-x-8">
+              <Link href="/dashboard" className="text-xl font-semibold text-gray-900">
                 RV Calderon Armani
-              </h1>
+              </Link>
               {company && (
                 <span className="text-sm text-gray-500">
-                  | {company.name}
+                  {company.name}
                 </span>
               )}
+              <nav className="flex space-x-4">
+                {navigation.map((item) => {
+                  const isActive = pathname === item.href || pathname?.startsWith(item.href + '/')
+                  return (
+                    <Link
+                      key={item.name}
+                      href={item.href}
+                      className={`px-3 py-2 text-sm font-medium rounded-md ${
+                        isActive
+                          ? 'bg-primary-100 text-primary-700'
+                          : 'text-gray-600 hover:text-gray-900 hover:bg-gray-100'
+                      }`}
+                    >
+                      {item.name}
+                    </Link>
+                  )
+                })}
+              </nav>
             </div>
 
             <div className="flex items-center space-x-4">

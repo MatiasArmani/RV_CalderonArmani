@@ -54,11 +54,11 @@ export default function DashboardPage() {
       </div>
 
       {/* Info card */}
-      <div className="mt-8 bg-blue-50 border border-blue-200 rounded-lg p-6">
-        <h3 className="text-sm font-medium text-blue-800">Próximos pasos</h3>
-        <p className="mt-2 text-sm text-blue-700">
-          Los módulos de Proyectos, Productos y Versiones estarán disponibles en la Etapa 3.
-          Por ahora, el sistema de autenticación está completamente funcional.
+      <div className="mt-8 bg-green-50 border border-green-200 rounded-lg p-6">
+        <h3 className="text-sm font-medium text-green-800">Etapa 3 completada</h3>
+        <p className="mt-2 text-sm text-green-700">
+          El sistema de gestión de Proyectos, Productos y Versiones está completamente funcional.
+          Próximas etapas: Upload de modelos 3D, Experiencia pública con Viewer 3D/AR.
         </p>
       </div>
     </div>
