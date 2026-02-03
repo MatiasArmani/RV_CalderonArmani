@@ -1,0 +1,27 @@
+import type { Metadata } from 'next'
+import { Inter } from 'next/font/google'
+import './globals.css'
+
+const inter = Inter({
+  subsets: ['latin'],
+  variable: '--font-inter',
+})
+
+export const metadata: Metadata = {
+  title: 'RV Calderon Armani - 3D Industrial Platform',
+  description: 'Platform for industrial 3D models and augmented reality experiences',
+}
+
+export default function RootLayout({
+  children,
+}: {
+  children: React.ReactNode
+}) {
+  return (
+    <html lang="es" className={inter.variable}>
+      <body className="min-h-screen bg-background antialiased">
+        {children}
+      </body>
+    </html>
+  )
+}

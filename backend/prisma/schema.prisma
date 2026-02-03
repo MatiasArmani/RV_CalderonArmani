@@ -1,0 +1,237 @@
+// Prisma Schema for RV Calderon Armani
+// Multi-tenant architecture with strict company isolation
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// =============================================================================
+// ENUMS
+// =============================================================================
+
+enum Role {
+  ADMIN
+  USER
+}
+
+enum UserStatus {
+  ACTIVE
+  DISABLED
+}
+
+enum AssetKind {
+  SOURCE_GLB
+  OPTIMIZED_GLB
+  USDZ
+  THUMB
+}
+
+enum AssetStatus {
+  PENDING_UPLOAD
+  UPLOADED
+  PROCESSING
+  READY
+  FAILED
+}
+
+// =============================================================================
+// MULTI-TENANT: Company
+// =============================================================================
+
+model Company {
+  id        String   @id @default(uuid())
+  name      String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relations
+  users           User[]
+  projects        Project[]
+  products        Product[]
+  versions        Version[]
+  assets          Asset[]
+  shares          Share[]
+  visits          Visit[]
+  refreshSessions RefreshSession[]
+
+  @@map("companies")
+}
+
+// =============================================================================
+// AUTH: User + RefreshSession
+// =============================================================================
+
+model User {
+  id           String     @id @default(uuid())
+  companyId    String
+  email        String     @unique
+  passwordHash String
+  role         Role       @default(USER)
+  status       UserStatus @default(ACTIVE)
+  createdAt    DateTime   @default(now())
+  updatedAt    DateTime   @updatedAt
+
+  // Relations
+  company         Company          @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  refreshSessions RefreshSession[]
+
+  @@index([companyId])
+  @@index([email])
+  @@map("users")
+}
+
+model RefreshSession {
+  id               String    @id @default(uuid())
+  userId           String
+  companyId        String
+  refreshTokenHash String
+  expiresAt        DateTime
+  revokedAt        DateTime?
+  createdAt        DateTime  @default(now())
+
+  // Relations
+  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  company Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([refreshTokenHash])
+  @@map("refresh_sessions")
+}
+
+// =============================================================================
+// DOMAIN: Project → Product → Version
+// =============================================================================
+
+model Project {
+  id          String   @id @default(uuid())
+  companyId   String
+  name        String
+  description String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  // Relations
+  company  Company   @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  products Product[]
+
+  @@index([companyId])
+  @@map("projects")
+}
+
+model Product {
+  id          String   @id @default(uuid())
+  companyId   String
+  projectId   String
+  name        String
+  description String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  // Relations
+  company  Company   @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  project  Project   @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  versions Version[]
+
+  @@index([companyId])
+  @@index([projectId])
+  @@map("products")
+}
+
+model Version {
+  id        String   @id @default(uuid())
+  companyId String
+  productId String
+  label     String // e.g., "v1.0", "v2.0-beta"
+  notes     String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relations
+  company Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  product Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+  assets  Asset[]
+  shares  Share[]
+
+  @@index([companyId])
+  @@index([productId])
+  @@map("versions")
+}
+
+// =============================================================================
+// ASSETS
+// =============================================================================
+
+model Asset {
+  id           String      @id @default(uuid())
+  companyId    String
+  versionId    String
+  kind         AssetKind
+  status       AssetStatus @default(PENDING_UPLOAD)
+  storageKey   String // S3 path - NEVER expose to client
+  contentType  String
+  sizeBytes    Int
+  meta         Json? // { thumbAssetId, usdzAssetId, glbUrl, etc. }
+  errorMessage String?
+  createdAt    DateTime    @default(now())
+  updatedAt    DateTime    @updatedAt
+
+  // Relations
+  company Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  version Version @relation(fields: [versionId], references: [id], onDelete: Cascade)
+
+  @@index([companyId])
+  @@index([versionId])
+  @@index([status])
+  @@map("assets")
+}
+
+// =============================================================================
+// SHARES + VISITS
+// =============================================================================
+
+model Share {
+  id         String    @id @default(uuid())
+  companyId  String
+  versionId  String
+  token      String    @unique // 64 chars hex, cryptographically random
+  expiresAt  DateTime
+  maxVisits  Int? // null = unlimited
+  visitCount Int       @default(0)
+  revokedAt  DateTime?
+  createdAt  DateTime  @default(now())
+
+  // Relations
+  company Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  version Version @relation(fields: [versionId], references: [id], onDelete: Cascade)
+  visits  Visit[]
+
+  @@index([companyId])
+  @@index([versionId])
+  @@index([token])
+  @@map("shares")
+}
+
+model Visit {
+  id         String    @id @default(uuid())
+  companyId  String
+  shareId    String
+  startedAt  DateTime  @default(now())
+  endedAt    DateTime?
+  durationMs Int?
+  usedAR     Boolean   @default(false)
+  device     Json? // { ua, os, isMobile }
+  createdAt  DateTime  @default(now())
+
+  // Relations
+  company Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  share   Share   @relation(fields: [shareId], references: [id], onDelete: Cascade)
+
+  @@index([companyId])
+  @@index([shareId])
+  @@map("visits")
+}
