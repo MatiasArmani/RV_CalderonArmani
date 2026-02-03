@@ -7,6 +7,9 @@ import rateLimit from 'express-rate-limit'
 import { Request } from 'express'
 import { logger } from '../utils/logger'
 
+// Skip rate limiting in test environment
+const isTestEnv = process.env.NODE_ENV === 'test'
+
 // Rate limit response format
 const rateLimitMessage = {
   error: {
@@ -43,6 +46,7 @@ export const loginLimiter = rateLimit({
   standardHeaders: true,
   legacyHeaders: false,
   keyGenerator: getKeyGenerator(false),
+  skip: () => isTestEnv,
   handler: (req, res) => {
     onLimitReached(req)
     res.status(429).json(rateLimitMessage)
@@ -56,6 +60,7 @@ export const registerLimiter = rateLimit({
   standardHeaders: true,
   legacyHeaders: false,
   keyGenerator: getKeyGenerator(false),
+  skip: () => isTestEnv,
   handler: (req, res) => {
     onLimitReached(req)
     res.status(429).json(rateLimitMessage)
@@ -69,6 +74,7 @@ export const refreshLimiter = rateLimit({
   standardHeaders: true,
   legacyHeaders: false,
   keyGenerator: getKeyGenerator(false),
+  skip: () => isTestEnv,
   handler: (req, res) => {
     onLimitReached(req)
     res.status(429).json(rateLimitMessage)
@@ -83,6 +89,7 @@ export const createShareLimiter = rateLimit({
   standardHeaders: true,
   legacyHeaders: false,
   keyGenerator: getKeyGenerator(true),
+  skip: () => isTestEnv,
   handler: (req, res) => {
     onLimitReached(req)
     res.status(429).json(rateLimitMessage)
@@ -97,6 +104,7 @@ export const publicExperienceLimiter = rateLimit({
   standardHeaders: true,
   legacyHeaders: false,
   keyGenerator: getKeyGenerator(false),
+  skip: () => isTestEnv,
   handler: (req, res) => {
     onLimitReached(req)
     res.status(429).json(rateLimitMessage)
@@ -111,6 +119,7 @@ export const uploadLimiter = rateLimit({
   standardHeaders: true,
   legacyHeaders: false,
   keyGenerator: getKeyGenerator(true),
+  skip: () => isTestEnv,
   handler: (req, res) => {
     onLimitReached(req)
     res.status(429).json(rateLimitMessage)

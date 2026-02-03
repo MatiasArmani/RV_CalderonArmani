@@ -1,15 +1,28 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
+import { useRouter } from 'next/navigation'
 import Link from 'next/link'
+import { useAuth } from '@/lib/auth'
+import { ApiClientError } from '@/lib/api'
 
 export default function RegisterPage() {
+  const router = useRouter()
+  const { register, isAuthenticated, isLoading: authLoading } = useAuth()
+
   const [companyName, setCompanyName] = useState('')
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [confirmPassword, setConfirmPassword] = useState('')
   const [isLoading, setIsLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
+
+  // Redirect if already authenticated
+  useEffect(() => {
+    if (isAuthenticated && !authLoading) {
+      router.push('/dashboard')
+    }
+  }, [isAuthenticated, authLoading, router])
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -29,13 +42,32 @@ export default function RegisterPage() {
     }
 
     try {
-      // TODO: Implement register API call
-      console.log('Register attempt:', { companyName, email })
+      await register({ companyName, email, password })
+      router.push('/dashboard')
     } catch (err) {
-      setError('Error al crear la cuenta. Intenta de nuevo.')
+      if (err instanceof ApiClientError) {
+        if (err.code === 'CONFLICT') {
+          setError('Este email ya está registrado')
+        } else if (err.code === 'VALIDATION_ERROR' && err.details) {
+          setError(err.details.map(d => d.message).join('. '))
+        } else {
+          setError(err.message)
+        }
+      } else {
+        setError('Error al crear la cuenta. Intenta de nuevo.')
+      }
     } finally {
       setIsLoading(false)
     }
+  }
+
+  // Don't show register form while checking auth state
+  if (authLoading) {
+    return (
+      <div className="flex items-center justify-center">
+        <p className="text-gray-500">Cargando...</p>
+      </div>
+    )
   }
 
   return (

@@ -1,13 +1,26 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
+import { useRouter } from 'next/navigation'
 import Link from 'next/link'
+import { useAuth } from '@/lib/auth'
+import { ApiClientError } from '@/lib/api'
 
 export default function LoginPage() {
+  const router = useRouter()
+  const { login, isAuthenticated, isLoading: authLoading } = useAuth()
+
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [isLoading, setIsLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
+
+  // Redirect if already authenticated
+  useEffect(() => {
+    if (isAuthenticated && !authLoading) {
+      router.push('/dashboard')
+    }
+  }, [isAuthenticated, authLoading, router])
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -15,13 +28,32 @@ export default function LoginPage() {
     setError(null)
 
     try {
-      // TODO: Implement login API call
-      console.log('Login attempt:', { email })
+      await login({ email, password })
+      router.push('/dashboard')
     } catch (err) {
-      setError('Error al iniciar sesión. Verifica tus credenciales.')
+      if (err instanceof ApiClientError) {
+        if (err.code === 'INVALID_CREDENTIALS') {
+          setError('Email o contraseña incorrectos')
+        } else if (err.code === 'FORBIDDEN') {
+          setError('Tu cuenta está deshabilitada')
+        } else {
+          setError(err.message)
+        }
+      } else {
+        setError('Error al iniciar sesión. Intenta de nuevo.')
+      }
     } finally {
       setIsLoading(false)
     }
+  }
+
+  // Don't show login form while checking auth state
+  if (authLoading) {
+    return (
+      <div className="flex items-center justify-center">
+        <p className="text-gray-500">Cargando...</p>
+      </div>
+    )
   }
 
   return (

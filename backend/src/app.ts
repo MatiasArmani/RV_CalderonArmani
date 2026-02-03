@@ -6,10 +6,12 @@
 import express, { Express } from 'express'
 import helmet from 'helmet'
 import cors from 'cors'
+import cookieParser from 'cookie-parser'
 
 import { getConfig } from './common/config/index'
 import { errorHandler, requestLogger } from './common/middleware/index'
 import { healthRouter } from './modules/health/index'
+import { authRouter } from './modules/auth/index'
 
 export function createApp(): Express {
   const app = express()
@@ -60,6 +62,9 @@ export function createApp(): Express {
     })
   )
 
+  // Cookie parsing (for refresh tokens)
+  app.use(cookieParser())
+
   // Body parsing
   app.use(express.json({ limit: '10mb' }))
   app.use(express.urlencoded({ extended: true, limit: '10mb' }))
@@ -69,9 +74,9 @@ export function createApp(): Express {
 
   // Routes
   app.use('/api/health', healthRouter)
+  app.use('/api/auth', authRouter)
 
   // TODO: Add module routes here as they are implemented
-  // app.use('/api/auth', authRouter)
   // app.use('/api/projects', projectsRouter)
   // app.use('/api/products', productsRouter)
   // app.use('/api/versions', versionsRouter)
