@@ -2,6 +2,9 @@
 const nextConfig = {
   reactStrictMode: true,
 
+  // Allow Next.js dev server to serve /_next/* assets to the LAN IP
+  allowedDevOrigins: ['http://192.168.137.1:3000'],
+
   // Proxy /api/* to the backend so browser calls are same-origin (no CORS)
   async rewrites() {
     const backendUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:4000'
