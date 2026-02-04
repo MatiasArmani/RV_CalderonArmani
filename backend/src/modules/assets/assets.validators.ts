@@ -19,8 +19,8 @@ export const requestUploadUrlValidators = [
     .withMessage('Filename is required')
     .isLength({ max: 255 })
     .withMessage('Filename must be at most 255 characters')
-    .matches(/^[\w\-. ]+\.glb$/i)
-    .withMessage('Filename must be a valid .glb file name'),
+    .matches(/\.glb$/i)
+    .withMessage('Filename must end with .glb'),
 
   body('contentType')
     .isString()
@@ -29,7 +29,10 @@ export const requestUploadUrlValidators = [
     .withMessage(`Content type must be ${ALLOWED_CONTENT_TYPE}`),
 
   body('sizeBytes')
-    .isInt({ min: 1, max: MAX_FILE_SIZE_BYTES })
+    .custom((value: unknown) => {
+      const num = Number(value)
+      return Number.isInteger(num) && num >= 1 && num <= MAX_FILE_SIZE_BYTES
+    })
     .withMessage(`File size must be between 1 byte and ${MAX_FILE_SIZE_BYTES} bytes (100MB)`),
 ]
 

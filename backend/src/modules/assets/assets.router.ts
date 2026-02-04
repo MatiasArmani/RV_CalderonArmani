@@ -42,7 +42,7 @@ router.get(
   '/:id',
   validate(assetIdValidator),
   asyncHandler(async (req, res) => {
-    const asset = await assetsService.getAsset(req.params.id, req.user!.companyId)
+    const asset = await assetsService.getAsset(req.params.id as string, req.user!.companyId)
     res.json(asset)
   })
 )
@@ -76,7 +76,7 @@ router.post(
   '/:id/complete',
   validate(completeUploadValidators),
   asyncHandler(async (req, res) => {
-    const asset = await assetsService.completeUpload(req.params.id, req.user!.companyId)
+    const asset = await assetsService.completeUpload(req.params.id as string, req.user!.companyId)
     res.json(asset)
   })
 )
@@ -89,7 +89,7 @@ router.delete(
   '/:id',
   validate(assetIdValidator),
   asyncHandler(async (req, res) => {
-    await assetsService.deleteAsset(req.params.id, req.user!.companyId)
+    await assetsService.deleteAsset(req.params.id as string, req.user!.companyId)
     res.json({ ok: true })
   })
 )

@@ -134,26 +134,26 @@ export async function generatePlaceholderThumbnail(): Promise<Buffer> {
 
   // Draw front face
   ctx.beginPath()
-  ctx.moveTo(front[0].x, front[0].y)
+  ctx.moveTo(front[0]!.x, front[0]!.y)
   front.forEach((p) => ctx.lineTo(p.x, p.y))
   ctx.closePath()
   ctx.stroke()
 
   // Draw top face
   ctx.beginPath()
-  ctx.moveTo(top[0].x, top[0].y)
+  ctx.moveTo(top[0]!.x, top[0]!.y)
   top.forEach((p) => ctx.lineTo(p.x, p.y))
   ctx.closePath()
   ctx.stroke()
 
   // Connect front to top
   ctx.beginPath()
-  ctx.moveTo(front[0].x, front[0].y)
+  ctx.moveTo(front[0]!.x, front[0]!.y)
   ctx.lineTo(cx - size, cy - size * 1.2)
-  ctx.moveTo(front[2].x, front[2].y)
+  ctx.moveTo(front[2]!.x, front[2]!.y)
   ctx.lineTo(cx + size, cy - size * 1.2)
-  ctx.moveTo(front[3].x, front[3].y)
-  ctx.lineTo(top[2].x, top[2].y)
+  ctx.moveTo(front[3]!.x, front[3]!.y)
+  ctx.lineTo(top[2]!.x, top[2]!.y)
   ctx.stroke()
 
   // Add "3D" text below the cube

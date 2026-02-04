@@ -42,6 +42,7 @@ export default function VersionsPage() {
 
   // Upload state
   const [uploadingVersionId, setUploadingVersionId] = useState<string | null>(null)
+  const uploadingVersionIdRef = useRef<string | null>(null)
   const [uploadProgress, setUploadProgress] = useState(0)
   const [uploadError, setUploadError] = useState<string | null>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
@@ -155,6 +156,7 @@ export default function VersionsPage() {
   }
 
   function triggerFileInput(versionId: string) {
+    uploadingVersionIdRef.current = versionId
     setUploadingVersionId(versionId)
     setUploadError(null)
     fileInputRef.current?.click()
@@ -162,43 +164,56 @@ export default function VersionsPage() {
 
   async function handleFileChange(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0]
-    if (!file || !uploadingVersionId) return
+    const versionId = uploadingVersionIdRef.current
+    if (!file || !versionId) return
 
     // Reset file input
     e.target.value = ''
 
-    // Validate file
+    // Validate file locally
     if (!file.name.toLowerCase().endsWith('.glb')) {
       setUploadError('Solo se permiten archivos .glb')
       setUploadingVersionId(null)
+      uploadingVersionIdRef.current = null
       return
     }
 
-    // Max 100MB
+    if (file.size === 0) {
+      setUploadError('El archivo está vacío')
+      setUploadingVersionId(null)
+      uploadingVersionIdRef.current = null
+      return
+    }
+
     if (file.size > 104857600) {
       setUploadError('El archivo es demasiado grande (máx. 100MB)')
       setUploadingVersionId(null)
+      uploadingVersionIdRef.current = null
       return
     }
 
     setUploadProgress(0)
 
     try {
-      await assetsApi.uploadGlb(uploadingVersionId, file, (progress) => {
+      await assetsApi.uploadGlb(versionId, file, (progress) => {
         setUploadProgress(progress)
       })
       setUploadingVersionId(null)
+      uploadingVersionIdRef.current = null
       setUploadProgress(0)
       loadData()
     } catch (err) {
       if (err instanceof ApiClientError) {
-        setUploadError(err.message)
+        // Show details if available (e.g. which field failed validation)
+        const detail = err.details?.[0]?.message
+        setUploadError(detail ?? err.message)
       } else if (err instanceof Error) {
         setUploadError(err.message)
       } else {
         setUploadError('Error al subir el archivo')
       }
       setUploadingVersionId(null)
+      uploadingVersionIdRef.current = null
       setUploadProgress(0)
     }
   }

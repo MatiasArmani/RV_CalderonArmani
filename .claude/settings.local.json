@@ -5,7 +5,11 @@
       "Bash(npm run typecheck:*)",
       "Bash(npm run build:*)",
       "Bash(npx next build)",
-      "Bash(npm install:*)"
+      "Bash(npm install:*)",
+      "Bash(curl:*)",
+      "Bash(npx prisma db execute:*)",
+      "Bash(node -e:*)",
+      "Bash(npx tsc:*)"
     ]
   }
 }

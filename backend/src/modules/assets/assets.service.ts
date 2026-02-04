@@ -6,6 +6,7 @@
 
 import { AssetKind, AssetStatus } from '@prisma/client'
 import { validateTenantAccess } from '../auth/auth.middleware'
+import { Errors } from '../../common/errors/index'
 import * as assetsRepo from './assets.repository'
 import * as versionsRepo from '../versions/versions.repository'
 import {
@@ -108,9 +109,7 @@ async function validateVersionAccess(versionId: string, companyId: string): Prom
 function validateTransition(currentStatus: AssetStatus, newStatus: AssetStatus): void {
   const allowed = VALID_TRANSITIONS[currentStatus]
   if (!allowed.includes(newStatus)) {
-    throw new Error(
-      `Invalid status transition from ${currentStatus} to ${newStatus}`
-    )
+    throw Errors.invalidStateTransition(currentStatus, newStatus)
   }
 }
 
@@ -130,24 +129,27 @@ export async function requestUploadUrl(
 
   // Validate content type
   if (contentType !== ALLOWED_CONTENT_TYPE) {
-    throw new Error(`Invalid content type: ${contentType}. Only ${ALLOWED_CONTENT_TYPE} is allowed`)
+    throw Errors.validation(
+      [{ field: 'contentType', message: `Must be ${ALLOWED_CONTENT_TYPE}` }]
+    )
   }
 
   // Validate file size
   if (sizeBytes > MAX_FILE_SIZE_BYTES) {
-    throw new Error(
-      `File too large: ${sizeBytes} bytes. Maximum is ${MAX_FILE_SIZE_BYTES} bytes (100MB)`
+    throw Errors.validation(
+      [{ field: 'sizeBytes', message: 'File too large. Maximum is 100MB' }]
     )
   }
 
   // Check if version already has a SOURCE_GLB asset
   const existingAsset = await assetsRepo.findSourceGlbByVersion(versionId)
   if (existingAsset && existingAsset.status !== 'FAILED') {
-    throw new Error('Version already has a source GLB asset. Delete it first to upload a new one.')
+    throw Errors.conflict('Esta versión ya tiene un modelo 3D. Elimínelo primero para subir uno nuevo.')
   }
 
-  // Build storage key
-  const storageKey = buildStorageKey(companyId, versionId, 'source', filename)
+  // Sanitize filename for S3 key (keep alphanumeric, hyphens, underscores, dots)
+  const safeFilename = filename.replace(/[^a-zA-Z0-9\-_.]/g, '_')
+  const storageKey = buildStorageKey(companyId, versionId, 'source', safeFilename)
 
   // Create asset record
   const asset = await assetsRepo.create({
@@ -161,7 +163,7 @@ export async function requestUploadUrl(
   })
 
   // Get presigned upload URL
-  const presigned = await getPresignedUploadUrl(storageKey, contentType, sizeBytes)
+  const presigned = await getPresignedUploadUrl(storageKey, contentType)
 
   return {
     assetId: asset.id,
@@ -182,13 +184,13 @@ export async function completeUpload(
   // Get asset and validate tenant access
   const asset = await assetsRepo.findById(assetId)
   if (!asset) {
-    throw new Error('Asset not found')
+    throw Errors.notFound('Asset')
   }
   validateTenantAccess(asset, companyId)
 
   // Validate current state
   if (asset.status !== 'PENDING_UPLOAD') {
-    throw new Error(`Cannot complete upload: asset is in ${asset.status} state`)
+    throw Errors.invalidStateTransition(asset.status, 'UPLOADED')
   }
 
   // Verify the file exists in S3
@@ -197,7 +199,7 @@ export async function completeUpload(
     await assetsRepo.updateStatus(assetId, 'FAILED', {
       errorMessage: 'File not found in storage after upload',
     })
-    throw new Error('File not found in storage. Upload may have failed.')
+    throw Errors.assetProcessingFailed('El archivo no se encontró en almacenamiento. La subida puede haber fallado.')
   }
 
   // Validate file size matches (with 5% tolerance)
@@ -209,7 +211,7 @@ export async function completeUpload(
     await assetsRepo.updateStatus(assetId, 'FAILED', {
       errorMessage: sizeValidation.error,
     })
-    throw new Error(sizeValidation.error)
+    throw Errors.assetProcessingFailed(sizeValidation.error ?? 'File size mismatch')
   }
 
   // Transition to UPLOADED
@@ -249,7 +251,7 @@ async function processAsset(
       await assetsRepo.updateStatus(assetId, 'FAILED', {
         errorMessage: glbValidation.error,
       })
-      throw new Error(glbValidation.error)
+      throw Errors.assetProcessingFailed(glbValidation.error ?? 'Invalid GLB format')
     }
 
     // Generate placeholder thumbnail
@@ -324,7 +326,7 @@ export async function getAsset(
 ): Promise<AssetWithUrls> {
   const asset = await assetsRepo.findById(assetId)
   if (!asset) {
-    throw new Error('Asset not found')
+    throw Errors.notFound('Asset')
   }
   validateTenantAccess(asset, companyId)
 
@@ -373,7 +375,7 @@ export async function deleteAsset(
 ): Promise<void> {
   const asset = await assetsRepo.findById(assetId)
   if (!asset) {
-    throw new Error('Asset not found')
+    throw Errors.notFound('Asset')
   }
   validateTenantAccess(asset, companyId)
 

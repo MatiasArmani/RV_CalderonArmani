@@ -54,8 +54,7 @@ export interface PresignedUploadResult {
  */
 export async function getPresignedUploadUrl(
   storageKey: string,
-  contentType: string,
-  sizeBytes: number
+  contentType: string
 ): Promise<PresignedUploadResult> {
   const config = getConfig()
   const client = getS3Client()
@@ -64,7 +63,9 @@ export async function getPresignedUploadUrl(
     Bucket: config.AWS_S3_BUCKET,
     Key: storageKey,
     ContentType: contentType,
-    ContentLength: sizeBytes,
+    // ContentLength intentionally omitted: browsers cannot set Content-Length
+    // manually (it's a forbidden XMLHttpRequest header), so signing it would
+    // cause S3 to reject the upload with 403.
   })
 
   const url = await getSignedUrl(client, command, {

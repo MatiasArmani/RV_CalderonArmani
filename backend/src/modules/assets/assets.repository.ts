@@ -13,13 +13,13 @@ export interface CreateAssetInput {
   storageKey: string
   contentType: string
   sizeBytes: number
-  meta?: Prisma.JsonValue
+  meta?: Prisma.InputJsonValue
 }
 
 export interface UpdateAssetInput {
   status?: AssetStatus
   sizeBytes?: number
-  meta?: Prisma.JsonValue
+  meta?: Prisma.InputJsonValue
   errorMessage?: string | null
 }
 
