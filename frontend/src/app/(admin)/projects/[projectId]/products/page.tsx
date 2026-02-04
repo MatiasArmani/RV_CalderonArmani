@@ -169,7 +169,7 @@ export default function ProductsPage() {
           </button>
         </div>
       ) : (
-        <div className="bg-white shadow-sm border border-gray-200 rounded-lg overflow-hidden">
+        <div className="bg-white shadow-sm border border-gray-200 rounded-lg overflow-x-auto">
           <table className="min-w-full divide-y divide-gray-200">
             <thead className="bg-gray-50">
               <tr>

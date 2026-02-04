@@ -32,4 +32,10 @@ body {
   *:focus-visible {
     @apply outline-2 outline-offset-2 outline-primary-500;
   }
+
+  /* Form elements: todos los formularios de la app usan fondos claros,
+     así que el texto debe ser oscuro independientemente de prefers-color-scheme */
+  input, textarea, select {
+    @apply text-gray-900;
+  }
 }

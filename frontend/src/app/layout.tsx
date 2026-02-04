@@ -9,8 +9,8 @@ const inter = Inter({
 })
 
 export const metadata: Metadata = {
-  title: 'RV Calderon Armani - 3D Industrial Platform',
-  description: 'Platform for industrial 3D models and augmented reality experiences',
+  title: 'EquipAR - Plataforma Industrial 3D & AR',
+  description: 'Gestiona modelos 3D industriales y crea experiencias de realidad aumentada para tu empresa.',
 }
 
 export default function RootLayout({

@@ -45,24 +45,24 @@ export default function AdminLayout({
       {/* Header */}
       <header className="bg-white shadow-sm">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="flex justify-between items-center py-4">
-            <div className="flex items-center space-x-8">
+          <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-2 py-3 sm:py-4">
+            <div className="flex items-center gap-3 sm:gap-6">
               <Link href="/dashboard" className="text-xl font-semibold text-gray-900">
-                RV Calderon Armani
+                EquipAR
               </Link>
               {company && (
-                <span className="text-sm text-gray-500">
+                <span className="hidden sm:inline text-sm text-gray-500">
                   {company.name}
                 </span>
               )}
-              <nav className="flex space-x-4">
+              <nav className="flex gap-1 sm:gap-2">
                 {navigation.map((item) => {
                   const isActive = pathname === item.href || pathname?.startsWith(item.href + '/')
                   return (
                     <Link
                       key={item.name}
                       href={item.href}
-                      className={`px-3 py-2 text-sm font-medium rounded-md ${
+                      className={`px-2 sm:px-3 py-1 sm:py-2 text-sm font-medium rounded-md ${
                         isActive
                           ? 'bg-primary-100 text-primary-700'
                           : 'text-gray-600 hover:text-gray-900 hover:bg-gray-100'
@@ -75,11 +75,11 @@ export default function AdminLayout({
               </nav>
             </div>
 
-            <div className="flex items-center space-x-4">
+            <div className="flex items-center gap-3">
               {user && (
-                <div className="text-sm text-gray-600">
-                  <span>{user.email}</span>
-                  <span className="ml-2 px-2 py-1 text-xs bg-gray-100 rounded">
+                <div className="text-sm text-gray-600 flex items-center gap-2">
+                  <span className="hidden sm:inline">{user.email}</span>
+                  <span className="px-2 py-1 text-xs bg-gray-100 rounded">
                     {user.role}
                   </span>
                 </div>
