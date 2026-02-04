@@ -114,7 +114,7 @@ export default function ExperiencePage() {
       setStatusMessage('')
     } catch (err) {
       console.error('Error loading model:', err)
-      setError({ code: 'LOAD_ERROR', message: 'Error al cargar el modelo 3D' })
+      setError({ code: 'LOAD_ERROR', message: `Error al cargar el modelo 3D: ${err instanceof Error ? err.message : String(err)}` })
       setAppState('error')
       return
     }
@@ -186,7 +186,7 @@ export default function ExperiencePage() {
       }
     } catch (err) {
       console.error('Error loading model for AR:', err)
-      setError({ code: 'LOAD_ERROR', message: 'Error al cargar el modelo 3D' })
+      setError({ code: 'LOAD_ERROR', message: `Error al cargar el modelo 3D: ${err instanceof Error ? err.message : String(err)}` })
       setAppState('error')
       return
     }
