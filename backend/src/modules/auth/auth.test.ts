@@ -151,9 +151,9 @@ describe('Auth Endpoints', () => {
       // Check for httpOnly cookie
       const cookies = response.headers['set-cookie']
       expect(cookies).toBeDefined()
-      expect(cookies[0]).toContain('refreshToken=')
-      expect(cookies[0]).toContain('HttpOnly')
-      expect(cookies[0]).toContain('Path=/api/auth')
+      expect(cookies![0]).toContain('refreshToken=')
+      expect(cookies![0]).toContain('HttpOnly')
+      expect(cookies![0]).toContain('Path=/api/auth')
     })
 
     it('should reject invalid credentials', async () => {
@@ -234,7 +234,7 @@ describe('Auth Endpoints', () => {
       // Check cookie is cleared
       const cookies = response.headers['set-cookie']
       expect(cookies).toBeDefined()
-      expect(cookies[0]).toContain('refreshToken=;')
+      expect(cookies![0]).toContain('refreshToken=;')
     })
   })
 

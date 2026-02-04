@@ -43,7 +43,7 @@ router.get(
   '/:id',
   validate(productIdValidator),
   asyncHandler(async (req, res) => {
-    const product = await productsService.getProduct(req.params.id, req.user!.companyId)
+    const product = await productsService.getProduct(req.params.id as string, req.user!.companyId)
     res.json(product)
   })
 )
@@ -74,7 +74,7 @@ router.patch(
   validate(updateProductValidators),
   asyncHandler(async (req, res) => {
     const product = await productsService.updateProduct(
-      req.params.id,
+      req.params.id as string,
       req.user!.companyId,
       {
         name: req.body.name,
@@ -93,7 +93,7 @@ router.delete(
   '/:id',
   validate(productIdValidator),
   asyncHandler(async (req, res) => {
-    await productsService.deleteProduct(req.params.id, req.user!.companyId)
+    await productsService.deleteProduct(req.params.id as string, req.user!.companyId)
     res.json({ ok: true })
   })
 )

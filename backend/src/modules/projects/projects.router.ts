@@ -39,7 +39,7 @@ router.get(
   '/:id',
   validate(projectIdValidator),
   asyncHandler(async (req, res) => {
-    const project = await projectsService.getProject(req.params.id, req.user!.companyId)
+    const project = await projectsService.getProject(req.params.id as string, req.user!.companyId)
     res.json(project)
   })
 )
@@ -69,7 +69,7 @@ router.patch(
   validate(updateProjectValidators),
   asyncHandler(async (req, res) => {
     const project = await projectsService.updateProject(
-      req.params.id,
+      req.params.id as string,
       req.user!.companyId,
       {
         name: req.body.name,
@@ -88,7 +88,7 @@ router.delete(
   '/:id',
   validate(projectIdValidator),
   asyncHandler(async (req, res) => {
-    await projectsService.deleteProject(req.params.id, req.user!.companyId)
+    await projectsService.deleteProject(req.params.id as string, req.user!.companyId)
     res.json({ ok: true })
   })
 )

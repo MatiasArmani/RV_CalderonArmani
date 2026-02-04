@@ -11,3 +11,15 @@ export {
   type UploadUrlRequest,
   type UploadUrlResponse,
 } from './assets'
+export {
+  sharesApi,
+  type Share,
+  type CreateShareRequest,
+  type CreateShareResponse,
+} from './shares'
+export {
+  publicApi,
+  getExperience,
+  PublicApiError,
+  type PublicExperience,
+} from './public'

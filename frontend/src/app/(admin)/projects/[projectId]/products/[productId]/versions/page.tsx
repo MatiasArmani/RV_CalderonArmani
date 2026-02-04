@@ -8,10 +8,12 @@ import {
   productsApi,
   versionsApi,
   assetsApi,
+  sharesApi,
   Project,
   Product,
   Version,
   Asset,
+  Share,
   ApiClientError,
 } from '@/lib/api'
 
@@ -46,6 +48,19 @@ export default function VersionsPage() {
   const [uploadProgress, setUploadProgress] = useState(0)
   const [uploadError, setUploadError] = useState<string | null>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
+
+  // Share modal state
+  const [isShareModalOpen, setIsShareModalOpen] = useState(false)
+  const [sharingVersionId, setSharingVersionId] = useState<string | null>(null)
+  const [shares, setShares] = useState<Share[]>([])
+  const [isLoadingShares, setIsLoadingShares] = useState(false)
+  const [shareFormData, setShareFormData] = useState({
+    expiresInDays: 7,
+    maxVisits: '',
+  })
+  const [createdShareUrl, setCreatedShareUrl] = useState<string | null>(null)
+  const [shareError, setShareError] = useState<string | null>(null)
+  const [isCreatingShare, setIsCreatingShare] = useState(false)
 
   useEffect(() => {
     loadData()
@@ -224,6 +239,105 @@ export default function VersionsPage() {
     return sourceAsset
   }
 
+  // Share management functions
+  async function openShareModal(versionId: string) {
+    setSharingVersionId(versionId)
+    setIsShareModalOpen(true)
+    setCreatedShareUrl(null)
+    setShareError(null)
+    setShareFormData({ expiresInDays: 7, maxVisits: '' })
+
+    try {
+      setIsLoadingShares(true)
+      const sharesData = await sharesApi.list(versionId)
+      setShares(sharesData)
+    } catch (err) {
+      if (err instanceof ApiClientError) {
+        setShareError(err.message)
+      }
+    } finally {
+      setIsLoadingShares(false)
+    }
+  }
+
+  function closeShareModal() {
+    setIsShareModalOpen(false)
+    setSharingVersionId(null)
+    setShares([])
+    setCreatedShareUrl(null)
+    setShareError(null)
+  }
+
+  async function handleCreateShare(e: React.FormEvent) {
+    e.preventDefault()
+    if (!sharingVersionId) return
+
+    setIsCreatingShare(true)
+    setShareError(null)
+
+    try {
+      const expiresAt = new Date()
+      expiresAt.setDate(expiresAt.getDate() + shareFormData.expiresInDays)
+
+      const result = await sharesApi.create({
+        versionId: sharingVersionId,
+        expiresAt: expiresAt.toISOString(),
+        maxVisits: shareFormData.maxVisits ? parseInt(shareFormData.maxVisits) : null,
+      })
+
+      setCreatedShareUrl(result.url)
+      // Refresh shares list
+      const sharesData = await sharesApi.list(sharingVersionId)
+      setShares(sharesData)
+    } catch (err) {
+      if (err instanceof ApiClientError) {
+        const detail = err.details?.[0]?.message
+        setShareError(detail ?? err.message)
+      } else {
+        setShareError('Error al crear enlace')
+      }
+    } finally {
+      setIsCreatingShare(false)
+    }
+  }
+
+  async function handleRevokeShare(shareId: string) {
+    if (!sharingVersionId) return
+
+    try {
+      await sharesApi.revoke(shareId)
+      const sharesData = await sharesApi.list(sharingVersionId)
+      setShares(sharesData)
+    } catch (err) {
+      if (err instanceof ApiClientError) {
+        setShareError(err.message)
+      }
+    }
+  }
+
+  async function handleDeleteShare(shareId: string) {
+    if (!sharingVersionId) return
+
+    try {
+      await sharesApi.delete(shareId)
+      const sharesData = await sharesApi.list(sharingVersionId)
+      setShares(sharesData)
+    } catch (err) {
+      if (err instanceof ApiClientError) {
+        setShareError(err.message)
+      }
+    }
+  }
+
+  function copyToClipboard(text: string) {
+    navigator.clipboard.writeText(text)
+  }
+
+  function canShare(version: VersionWithAssets) {
+    const asset = getAssetStatus(version)
+    return asset?.status === 'READY'
+  }
+
   function renderAssetStatus(version: VersionWithAssets) {
     const asset = getAssetStatus(version)
 
@@ -390,6 +504,9 @@ export default function VersionsPage() {
                   Notas
                 </th>
                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  Compartir
+                </th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                   Creado
                 </th>
                 <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">
@@ -412,6 +529,18 @@ export default function VersionsPage() {
                     <p className="text-sm text-gray-500 truncate max-w-xs">
                       {version.notes || '-'}
                     </p>
+                  </td>
+                  <td className="px-6 py-4 whitespace-nowrap">
+                    {canShare(version) ? (
+                      <button
+                        onClick={() => openShareModal(version.id)}
+                        className="text-sm text-primary-600 hover:text-primary-700 font-medium"
+                      >
+                        Generar enlace
+                      </button>
+                    ) : (
+                      <span className="text-sm text-gray-400">-</span>
+                    )}
                   </td>
                   <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
                     {new Date(version.createdAt).toLocaleDateString('es-AR')}
@@ -454,7 +583,7 @@ export default function VersionsPage() {
         </div>
       )}
 
-      {/* Modal */}
+      {/* Version Modal */}
       {isModalOpen && (
         <div className="fixed inset-0 z-50 overflow-y-auto">
           <div className="flex min-h-screen items-center justify-center p-4">
@@ -536,6 +665,169 @@ export default function VersionsPage() {
                   </button>
                 </div>
               </form>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Share Modal */}
+      {isShareModalOpen && (
+        <div className="fixed inset-0 z-50 overflow-y-auto">
+          <div className="flex min-h-screen items-center justify-center p-4">
+            <div
+              className="fixed inset-0 bg-gray-500 bg-opacity-75 transition-opacity"
+              onClick={closeShareModal}
+            />
+            <div className="relative bg-white rounded-lg shadow-xl max-w-lg w-full p-6">
+              <h2 className="text-lg font-medium text-gray-900 mb-4">
+                Compartir Versión
+              </h2>
+
+              {shareError && (
+                <div className="mb-4 rounded-md bg-red-50 p-4">
+                  <p className="text-sm text-red-700">{shareError}</p>
+                </div>
+              )}
+
+              {/* Created share URL */}
+              {createdShareUrl && (
+                <div className="mb-4 rounded-md bg-green-50 p-4">
+                  <p className="text-sm font-medium text-green-800 mb-2">
+                    Enlace creado:
+                  </p>
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="text"
+                      value={createdShareUrl}
+                      readOnly
+                      className="flex-1 text-sm bg-white border border-green-300 rounded px-2 py-1"
+                    />
+                    <button
+                      onClick={() => copyToClipboard(createdShareUrl)}
+                      className="px-3 py-1 text-sm bg-green-600 text-white rounded hover:bg-green-700"
+                    >
+                      Copiar
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {/* Create new share form */}
+              <form onSubmit={handleCreateShare} className="mb-6">
+                <div className="grid grid-cols-2 gap-4 mb-4">
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">
+                      Expira en
+                    </label>
+                    <select
+                      value={shareFormData.expiresInDays}
+                      onChange={(e) =>
+                        setShareFormData((prev) => ({
+                          ...prev,
+                          expiresInDays: parseInt(e.target.value),
+                        }))
+                      }
+                      className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-primary-500 focus:outline-none focus:ring-primary-500"
+                    >
+                      <option value={1}>1 día</option>
+                      <option value={7}>7 días</option>
+                      <option value={14}>14 días</option>
+                      <option value={30}>30 días</option>
+                      <option value={90}>90 días</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">
+                      Máx. visitas (opcional)
+                    </label>
+                    <input
+                      type="number"
+                      min="1"
+                      placeholder="Sin límite"
+                      value={shareFormData.maxVisits}
+                      onChange={(e) =>
+                        setShareFormData((prev) => ({
+                          ...prev,
+                          maxVisits: e.target.value,
+                        }))
+                      }
+                      className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-primary-500 focus:outline-none focus:ring-primary-500"
+                    />
+                  </div>
+                </div>
+                <button
+                  type="submit"
+                  disabled={isCreatingShare}
+                  className="w-full px-4 py-2 text-sm font-medium text-white bg-primary-600 rounded-md hover:bg-primary-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500 disabled:opacity-50"
+                >
+                  {isCreatingShare ? 'Creando...' : 'Crear nuevo enlace'}
+                </button>
+              </form>
+
+              {/* Existing shares list */}
+              <div>
+                <h3 className="text-sm font-medium text-gray-700 mb-2">
+                  Enlaces existentes
+                </h3>
+                {isLoadingShares ? (
+                  <p className="text-sm text-gray-500">Cargando...</p>
+                ) : shares.length === 0 ? (
+                  <p className="text-sm text-gray-500">No hay enlaces creados</p>
+                ) : (
+                  <div className="space-y-2 max-h-48 overflow-y-auto">
+                    {shares.map((share) => (
+                      <div
+                        key={share.id}
+                        className={`flex items-center justify-between p-2 rounded border ${
+                          share.revokedAt
+                            ? 'bg-gray-50 border-gray-200'
+                            : 'bg-white border-gray-200'
+                        }`}
+                      >
+                        <div className="flex-1 min-w-0">
+                          <p className="text-xs text-gray-500">
+                            {share.token}
+                          </p>
+                          <p className="text-xs text-gray-400">
+                            Expira: {new Date(share.expiresAt).toLocaleDateString('es-AR')}
+                            {share.maxVisits && ` • Máx: ${share.maxVisits}`}
+                            {' • '}Visitas: {share.visitCount}
+                          </p>
+                          {share.revokedAt && (
+                            <span className="text-xs text-red-600">Revocado</span>
+                          )}
+                        </div>
+                        <div className="flex items-center gap-1 ml-2">
+                          {!share.revokedAt && (
+                            <button
+                              onClick={() => handleRevokeShare(share.id)}
+                              className="px-2 py-1 text-xs text-yellow-600 hover:text-yellow-800"
+                            >
+                              Revocar
+                            </button>
+                          )}
+                          <button
+                            onClick={() => handleDeleteShare(share.id)}
+                            className="px-2 py-1 text-xs text-red-600 hover:text-red-800"
+                          >
+                            Eliminar
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              <div className="mt-6 flex justify-end">
+                <button
+                  type="button"
+                  onClick={closeShareModal}
+                  className="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500"
+                >
+                  Cerrar
+                </button>
+              </div>
             </div>
           </div>
         </div>

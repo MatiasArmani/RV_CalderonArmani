@@ -43,7 +43,7 @@ router.get(
   '/:id',
   validate(versionIdValidator),
   asyncHandler(async (req, res) => {
-    const version = await versionsService.getVersion(req.params.id, req.user!.companyId)
+    const version = await versionsService.getVersion(req.params.id as string, req.user!.companyId)
     res.json(version)
   })
 )
@@ -74,7 +74,7 @@ router.patch(
   validate(updateVersionValidators),
   asyncHandler(async (req, res) => {
     const version = await versionsService.updateVersion(
-      req.params.id,
+      req.params.id as string,
       req.user!.companyId,
       {
         label: req.body.label,
@@ -93,7 +93,7 @@ router.delete(
   '/:id',
   validate(versionIdValidator),
   asyncHandler(async (req, res) => {
-    await versionsService.deleteVersion(req.params.id, req.user!.companyId)
+    await versionsService.deleteVersion(req.params.id as string, req.user!.companyId)
     res.json({ ok: true })
   })
 )
