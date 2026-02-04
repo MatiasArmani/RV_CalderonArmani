@@ -50,7 +50,9 @@ export function createApp(): Express {
   const allowedOrigins = [
     config.FRONTEND_URL,
     'http://localhost:3000',
+    'https://localhost:3000',
     'http://192.168.137.1:3000',
+    'https://192.168.137.1:3000',
   ]
 
   app.use(
