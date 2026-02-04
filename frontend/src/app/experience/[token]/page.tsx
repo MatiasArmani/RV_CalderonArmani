@@ -15,26 +15,28 @@ export default function ExperiencePage() {
   const [appState, setAppState] = useState<AppState>('loading')
   const [isARSupported, setIsARSupported] = useState(false)
   const [isIOSDevice, setIsIOSDevice] = useState(false)
-  const [statusMessage, setStatusMessage] = useState('')
-
-  // AR editing controls
   const [rotation, setRotation] = useState(0)
   const [isMoving, setIsMoving] = useState(false)
 
-  // Babylon.js refs
+  // ── Babylon refs ──────────────────────────────────────────
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const engineRef = useRef<import('@babylonjs/core').Engine | null>(null)
   const sceneRef = useRef<import('@babylonjs/core').Scene | null>(null)
   const xrRef = useRef<import('@babylonjs/core/XR').WebXRDefaultExperience | null>(null)
   const modelRef = useRef<import('@babylonjs/core').AbstractMesh | null>(null)
-  const hitTestSourceRef = useRef<XRHitTestSource | null>(null)
   const reticleRef = useRef<import('@babylonjs/core').Mesh | null>(null)
-  const anchorRef = useRef<XRAnchor | null>(null)
   const lastHitPoseRef = useRef<import('@babylonjs/core').Matrix | null>(null)
 
-  // Load experience data
+  // ── State refs: lets WebXR/Babylon callbacks read current
+  //    React state without stale closures ─────────────────────
+  const appStateRef = useRef<AppState>('loading')
+  const isMovingRef = useRef(false)
+  useEffect(() => { appStateRef.current = appState }, [appState])
+  useEffect(() => { isMovingRef.current = isMoving }, [isMoving])
+
+  // ── Load experience ───────────────────────────────────────
   useEffect(() => {
-    async function loadExperience() {
+    async function load() {
       try {
         const data = await getExperience(token)
         setExperience(data)
@@ -48,28 +50,42 @@ export default function ExperiencePage() {
         setAppState('error')
       }
     }
-    loadExperience()
+    load()
   }, [token])
 
-  // Detect device capabilities
+  // ── Device / AR detection ─────────────────────────────────
   useEffect(() => {
     const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent)
     setIsIOSDevice(isIOS)
-
     if ('xr' in navigator && !isIOS) {
-      const xrNav = navigator as Navigator & { xr: XRSystem }
-      xrNav.xr.isSessionSupported('immersive-ar').then((supported) => {
-        setIsARSupported(supported)
-      }).catch(() => setIsARSupported(false))
+      ;(navigator as Navigator & { xr: XRSystem }).xr
+        .isSessionSupported('immersive-ar')
+        .then((s) => setIsARSupported(s))
+        .catch(() => setIsARSupported(false))
     }
   }, [])
 
-  // Initialize 3D viewer (fallback mode)
+  // ── Cleanup ───────────────────────────────────────────────
+  const cleanup = useCallback(() => {
+    sceneRef.current?.dispose()
+    engineRef.current?.dispose()
+    sceneRef.current = null
+    engineRef.current = null
+    xrRef.current = null
+    modelRef.current = null
+    reticleRef.current = null
+    lastHitPoseRef.current = null
+  }, [])
+
+  useEffect(() => () => cleanup(), [cleanup])
+
+  // ── 3-D viewer fallback (orbit, no AR) ────────────────────
   const initViewerFallback = useCallback(async () => {
     if (!experience || !canvasRef.current) return
-
     const canvas = canvasRef.current
-    const { Engine, Scene, ArcRotateCamera, HemisphericLight, Vector3, Color4 } = await import('@babylonjs/core')
+
+    const { Engine, Scene, ArcRotateCamera, HemisphericLight, Vector3, Color4 } =
+      await import('@babylonjs/core')
     await import('@babylonjs/loaders/glTF')
     const { SceneLoader } = await import('@babylonjs/core/Loading/sceneLoader')
 
@@ -80,7 +96,7 @@ export default function ExperiencePage() {
     sceneRef.current = scene
     scene.clearColor = new Color4(0.95, 0.95, 0.95, 1)
 
-    const camera = new ArcRotateCamera('camera', Math.PI / 2, Math.PI / 3, 10, Vector3.Zero(), scene)
+    const camera = new ArcRotateCamera('cam', Math.PI / 2, Math.PI / 3, 10, Vector3.Zero(), scene)
     camera.attachControl(canvas, true)
     camera.lowerRadiusLimit = 0.5
     camera.upperRadiusLimit = 100
@@ -89,109 +105,96 @@ export default function ExperiencePage() {
     new HemisphericLight('light', new Vector3(0, 1, 0), scene).intensity = 1.2
 
     try {
-      setStatusMessage('Cargando modelo 3D...')
-      const result = await SceneLoader.ImportMeshAsync('', '', experience.assets.glbUrl, scene)
-
-      if (result.meshes.length > 0) {
-        // Frame the model
+      const { meshes } = await SceneLoader.ImportMeshAsync('', '', experience.assets.glbUrl, scene)
+      if (meshes.length > 0) {
         let min = new Vector3(Infinity, Infinity, Infinity)
         let max = new Vector3(-Infinity, -Infinity, -Infinity)
-        result.meshes.forEach((mesh) => {
-          if (mesh.getBoundingInfo) {
-            const bi = mesh.getBoundingInfo()
+        meshes.forEach((m) => {
+          if (m.getBoundingInfo) {
+            const bi = m.getBoundingInfo()
             min = Vector3.Minimize(min, bi.boundingBox.minimumWorld)
             max = Vector3.Maximize(max, bi.boundingBox.maximumWorld)
           }
         })
-        const center = min.add(max).scale(0.5)
-        const size = max.subtract(min)
-        const maxDim = Math.max(size.x, size.y, size.z)
-        camera.target = center
-        camera.radius = maxDim * 2
+        camera.target = min.add(max).scale(0.5)
+        camera.radius = Math.max(...[max.x - min.x, max.y - min.y, max.z - min.z]) * 2
       }
-
       setAppState('viewer-fallback')
-      setStatusMessage('')
     } catch (err) {
-      console.error('Error loading model:', err)
-      setError({ code: 'LOAD_ERROR', message: `Error al cargar el modelo 3D: ${err instanceof Error ? err.message : String(err)}` })
+      setError({
+        code: 'LOAD_ERROR',
+        message: `Error al cargar el modelo 3D: ${err instanceof Error ? err.message : String(err)}`,
+      })
       setAppState('error')
-      return
     }
 
     engine.runRenderLoop(() => scene.render())
     window.addEventListener('resize', () => engine.resize())
   }, [experience])
 
-  // Start AR Session with hit-test
+  // ── AR session ────────────────────────────────────────────
   const startARSession = useCallback(async () => {
     if (!experience || !canvasRef.current) return
-
     const canvas = canvasRef.current
 
-    // Import Babylon modules
     const BABYLON = await import('@babylonjs/core')
     await import('@babylonjs/loaders/glTF')
     const { SceneLoader } = await import('@babylonjs/core/Loading/sceneLoader')
     await import('@babylonjs/core/XR/features/WebXRHitTest')
-    await import('@babylonjs/core/XR/features/WebXRAnchorSystem')
 
-    // Create engine and scene
-    const engine = new BABYLON.Engine(canvas, true, { preserveDrawingBuffer: true, stencil: true, xrCompatible: true })
+    // Engine + scene
+    const engine = new BABYLON.Engine(canvas, true, {
+      preserveDrawingBuffer: true,
+      stencil: true,
+      xrCompatible: true,
+    })
     engineRef.current = engine
 
     const scene = new BABYLON.Scene(engine)
     sceneRef.current = scene
-    scene.clearColor = new BABYLON.Color4(0, 0, 0, 0) // Transparent for AR
+    scene.clearColor = new BABYLON.Color4(0, 0, 0, 0)
 
-    // Camera (will be replaced by XR camera)
-    const camera = new BABYLON.FreeCamera('camera', new BABYLON.Vector3(0, 1.6, 0), scene)
-    camera.attachControl(canvas, true)
+    // Placeholder camera — NO attachControl (would steal touch events from tap handler)
+    new BABYLON.FreeCamera('cam', new BABYLON.Vector3(0, 1.6, 0), scene)
 
-    // Lighting for AR
-    const light = new BABYLON.HemisphericLight('light', new BABYLON.Vector3(0, 1, 0), scene)
-    light.intensity = 1.0
+    // Lighting
+    new BABYLON.HemisphericLight('light', new BABYLON.Vector3(0, 1, 0), scene).intensity = 1.0
 
-    // Create reticle for placement preview
-    const reticle = BABYLON.MeshBuilder.CreateTorus('reticle', {
-      diameter: 0.15,
-      thickness: 0.02,
-      tessellation: 32,
-    }, scene)
-    const reticleMat = new BABYLON.StandardMaterial('reticleMat', scene)
-    reticleMat.diffuseColor = new BABYLON.Color3(0, 0.8, 0.4)
-    reticleMat.emissiveColor = new BABYLON.Color3(0, 0.5, 0.2)
-    reticle.material = reticleMat
+    // Reticle: torus ring, flat on floor
+    const reticle = BABYLON.MeshBuilder.CreateTorus(
+      'reticle',
+      { diameter: 0.45, thickness: 0.025, tessellation: 48 },
+      scene
+    )
+    reticle.rotation.x = -Math.PI / 2
+    const rMat = new BABYLON.StandardMaterial('rMat', scene)
+    rMat.diffuseColor = new BABYLON.Color3(0.2, 0.85, 0.3)
+    rMat.emissiveColor = new BABYLON.Color3(0.1, 0.55, 0.15)
+    reticle.material = rMat
     reticle.isVisible = false
     reticleRef.current = reticle
 
-    // Load the 3D model (hidden initially)
-    setStatusMessage('Cargando modelo 3D...')
-
+    // Load model (hidden until placed)
     try {
-      const result = await SceneLoader.ImportMeshAsync('', '', experience.assets.glbUrl, scene)
-
-      if (result.meshes.length > 0) {
-        const modelRoot = result.meshes[0]
-        modelRoot.setEnabled(false) // Hidden until placed
-
-        // Ensure model is at origin and properly scaled (assuming meters)
-        modelRoot.position = BABYLON.Vector3.Zero()
-        modelRoot.rotationQuaternion = null
-        modelRoot.rotation = BABYLON.Vector3.Zero()
-
-        // Scale check - GLB should be in meters for 1:1 AR
-        // If model seems too big/small, we can add metadata-based scaling later
-        modelRef.current = modelRoot
+      const { meshes } = await SceneLoader.ImportMeshAsync('', '', experience.assets.glbUrl, scene)
+      if (meshes.length > 0) {
+        const root = meshes[0]
+        root.setEnabled(false)
+        root.position = BABYLON.Vector3.Zero()
+        root.rotationQuaternion = null   // use Euler so rotation slider works
+        root.rotation = BABYLON.Vector3.Zero()
+        modelRef.current = root
       }
     } catch (err) {
-      console.error('Error loading model for AR:', err)
-      setError({ code: 'LOAD_ERROR', message: `Error al cargar el modelo 3D: ${err instanceof Error ? err.message : String(err)}` })
+      setError({
+        code: 'LOAD_ERROR',
+        message: `Error al cargar el modelo 3D: ${err instanceof Error ? err.message : String(err)}`,
+      })
       setAppState('error')
       return
     }
 
-    // Initialize WebXR
+    // WebXR
     try {
       const xr = await BABYLON.WebXRDefaultExperience.CreateAsync(scene, {
         uiOptions: { sessionMode: 'immersive-ar' },
@@ -199,414 +202,435 @@ export default function ExperiencePage() {
       })
       xrRef.current = xr
 
-      // Enable hit-test feature
       const hitTest = xr.baseExperience.featuresManager.enableFeature(
         BABYLON.WebXRFeatureName.HIT_TEST,
         'latest',
         { entityTypes: ['plane'] }
       ) as import('@babylonjs/core/XR/features/WebXRHitTest').WebXRHitTest
 
-      // Enable anchor feature for stability
-      const anchors = xr.baseExperience.featuresManager.enableFeature(
-        BABYLON.WebXRFeatureName.ANCHOR_SYSTEM,
-        'latest'
-      ) as import('@babylonjs/core/XR/features/WebXRAnchorSystem').WebXRAnchorSystem
-
-      // Track hit-test results to update reticle
+      // ── Hit-test callback ─────────────────────────────────
+      // Uses refs (appStateRef / isMovingRef) so it always reads
+      // the *current* React state, not the stale closure value.
       hitTest.onHitTestResultObservable.add((results) => {
-        if (results.length > 0 && appState === 'ar-scanning') {
-          const hit = results[0]
-          const hitMatrix = hit.transformationMatrix
+        if (results.length === 0) {
+          if (reticleRef.current) reticleRef.current.isVisible = false
+          return
+        }
 
-          // Update reticle position
+        const hitMatrix = results[0].transformationMatrix
+        const state = appStateRef.current
+        const moving = isMovingRef.current
+
+        if (state === 'ar-scanning' || (state === 'ar-placed' && moving)) {
+          // Extract position only — keep reticle rotation fixed (flat)
+          const pos = new BABYLON.Vector3()
+          const _r = new BABYLON.Quaternion()
+          const _s = new BABYLON.Vector3()
+          hitMatrix.decompose(_s, _r, pos)
+
+          // Show & position reticle
           if (reticleRef.current) {
             reticleRef.current.isVisible = true
-            hitMatrix.decompose(
-              reticleRef.current.scaling,
-              reticleRef.current.rotationQuaternion!,
-              reticleRef.current.position
-            )
-            reticleRef.current.scaling.setAll(1)
+            reticleRef.current.position = pos
           }
 
-          // Store for placement
+          // Always store latest hit for tap-to-place / tap-to-confirm
           lastHitPoseRef.current = hitMatrix.clone()
-        } else if (reticleRef.current) {
-          reticleRef.current.isVisible = false
+
+          // Live-move model while "Mover" is active
+          if (state === 'ar-placed' && moving && modelRef.current) {
+            modelRef.current.position = pos.clone()
+          }
+        } else {
+          if (reticleRef.current) reticleRef.current.isVisible = false
         }
       })
 
-      // Enter AR session
+      // Enter AR
       await xr.baseExperience.enterXRAsync('immersive-ar', 'unbounded')
-
       setAppState('ar-scanning')
-      setStatusMessage('Mueve el teléfono para detectar el piso')
 
-      // Handle session end
-      xr.baseExperience.onStateChangedObservable.add((state) => {
-        if (state === BABYLON.WebXRState.NOT_IN_XR) {
+      // Session end (system back / gesture)
+      xr.baseExperience.onStateChangedObservable.add((s) => {
+        if (s === BABYLON.WebXRState.NOT_IN_XR) {
           setAppState('ready')
           cleanup()
         }
       })
-
     } catch (err) {
-      console.error('WebXR initialization error:', err)
-      setError({ code: 'AR_ERROR', message: 'No se pudo iniciar AR. Usando visor 3D.' })
+      console.error('WebXR init error:', err)
       initViewerFallback()
     }
 
     engine.runRenderLoop(() => scene.render())
-  }, [experience, appState, initViewerFallback])
+  }, [experience, cleanup, initViewerFallback])
 
-  // Place model at current reticle position
+  // ── Place model at last hit position ──────────────────────
   const placeModel = useCallback(async () => {
-    if (!modelRef.current || !lastHitPoseRef.current || !sceneRef.current) return
-
+    if (!modelRef.current || !lastHitPoseRef.current) return
     const BABYLON = await import('@babylonjs/core')
+
+    const pos = new BABYLON.Vector3()
+    const _r = new BABYLON.Quaternion()
+    const _s = new BABYLON.Vector3()
+    lastHitPoseRef.current.decompose(_s, _r, pos)
+
     const model = modelRef.current
-
-    // Decompose hit matrix to get position/rotation
-    const position = new BABYLON.Vector3()
-    const rotation = new BABYLON.Quaternion()
-    const scale = new BABYLON.Vector3()
-    lastHitPoseRef.current.decompose(scale, rotation, position)
-
-    // Place model at hit position
-    model.position = position.clone()
-    model.rotationQuaternion = BABYLON.Quaternion.Identity()
+    model.position = pos.clone()
+    model.rotationQuaternion = null   // ensure Euler is active
+    model.rotation = BABYLON.Vector3.Zero()
     model.setEnabled(true)
 
-    // Hide reticle
-    if (reticleRef.current) {
-      reticleRef.current.isVisible = false
-    }
-
-    // Note: Anchoring is handled automatically by the WebXR system
-    // The model position is set relative to the tracked floor
+    if (reticleRef.current) reticleRef.current.isVisible = false
 
     setAppState('ar-placed')
-    setStatusMessage('')
     setRotation(0)
+    setIsMoving(false)
   }, [])
 
-  // Move model (drag on floor)
-  const moveModel = useCallback(async () => {
-    if (!modelRef.current || !lastHitPoseRef.current) return
-
-    const BABYLON = await import('@babylonjs/core')
-    const position = new BABYLON.Vector3()
-    const rotation = new BABYLON.Quaternion()
-    const scale = new BABYLON.Vector3()
-    lastHitPoseRef.current.decompose(scale, rotation, position)
-
-    // Keep current rotation, update position
-    modelRef.current.position.x = position.x
-    modelRef.current.position.z = position.z
-    // Y stays the same (floor level)
-  }, [])
-
-  // Rotate model
-  const handleRotationChange = useCallback((newRotation: number) => {
-    setRotation(newRotation)
+  // ── Rotation slider ───────────────────────────────────────
+  const handleRotationChange = useCallback((deg: number) => {
+    setRotation(deg)
     if (modelRef.current) {
-      modelRef.current.rotation.y = (newRotation * Math.PI) / 180
+      modelRef.current.rotation.y = (deg * Math.PI) / 180
     }
   }, [])
 
-  // Reset placement
+  // ── Reset → scanning ──────────────────────────────────────
   const resetPlacement = useCallback(() => {
-    if (modelRef.current) {
-      modelRef.current.setEnabled(false)
-    }
-    if (reticleRef.current) {
-      reticleRef.current.isVisible = true
-    }
-    anchorRef.current = null
+    if (modelRef.current) modelRef.current.setEnabled(false)
+    setIsMoving(false)
     setAppState('ar-scanning')
-    setStatusMessage('Mueve el teléfono para detectar el piso')
     setRotation(0)
   }, [])
 
-  // Exit AR
+  // ── Exit AR ───────────────────────────────────────────────
   const exitAR = useCallback(async () => {
     if (xrRef.current) {
-      await xrRef.current.baseExperience.exitXRAsync()
+      try { await xrRef.current.baseExperience.exitXRAsync() } catch {}
     }
     cleanup()
     setAppState('ready')
-  }, [])
-
-  // Cleanup
-  const cleanup = useCallback(() => {
-    if (sceneRef.current) {
-      sceneRef.current.dispose()
-      sceneRef.current = null
-    }
-    if (engineRef.current) {
-      engineRef.current.dispose()
-      engineRef.current = null
-    }
-    xrRef.current = null
-    modelRef.current = null
-    reticleRef.current = null
-    anchorRef.current = null
-    lastHitPoseRef.current = null
-    hitTestSourceRef.current = null
-  }, [])
-
-  // Cleanup on unmount
-  useEffect(() => {
-    return () => cleanup()
   }, [cleanup])
 
-  // Handle screen tap in AR mode
+  // ── Tap handler ───────────────────────────────────────────
+  // Uses refs so it never needs to re-register on state change.
+  // Handles two actions depending on current state:
+  //   ar-scanning  → place the model
+  //   ar-placed + moving → confirm new position (stop moving)
   useEffect(() => {
     const canvas = canvasRef.current
     if (!canvas) return
 
-    const handleTap = () => {
-      if (appState === 'ar-scanning' && lastHitPoseRef.current) {
+    const onTap = () => {
+      const state = appStateRef.current
+      if (state === 'ar-scanning' && lastHitPoseRef.current) {
         placeModel()
+      } else if (state === 'ar-placed' && isMovingRef.current) {
+        setIsMoving(false)
+        if (reticleRef.current) reticleRef.current.isVisible = false
       }
     }
 
-    canvas.addEventListener('click', handleTap)
-    canvas.addEventListener('touchend', handleTap)
-
+    canvas.addEventListener('click', onTap)
+    canvas.addEventListener('touchend', onTap)
     return () => {
-      canvas.removeEventListener('click', handleTap)
-      canvas.removeEventListener('touchend', handleTap)
+      canvas.removeEventListener('click', onTap)
+      canvas.removeEventListener('touchend', onTap)
     }
-  }, [appState, placeModel])
+  }, [placeModel])
 
-  // Render error states
+  // ═══════════════════════════════════════════════════════════
+  // RENDER
+  // ═══════════════════════════════════════════════════════════
+
+  // ── Error ─────────────────────────────────────────────────
   if (appState === 'error' && error) {
-    const errorMessages: Record<string, { title: string; description: string; emoji: string }> = {
-      SHARE_EXPIRED: { title: 'Enlace expirado', description: 'Este enlace ha expirado.', emoji: '⏰' },
-      SHARE_REVOKED: { title: 'Enlace revocado', description: 'Este enlace fue revocado.', emoji: '🚫' },
-      SHARE_LIMIT_REACHED: { title: 'Límite alcanzado', description: 'Máximo de visitas alcanzado.', emoji: '📊' },
-      NOT_FOUND: { title: 'No encontrado', description: 'El enlace no existe.', emoji: '🔍' },
+    const msgs: Record<string, { title: string; desc: string }> = {
+      SHARE_EXPIRED:       { title: 'Enlace expirado',  desc: 'Este enlace ha expirado.' },
+      SHARE_REVOKED:       { title: 'Enlace revocado',  desc: 'Este enlace fue revocado.' },
+      SHARE_LIMIT_REACHED: { title: 'Límite alcanzado', desc: 'Se alcanzó el máximo de visitas.' },
+      NOT_FOUND:           { title: 'No encontrado',    desc: 'El enlace no existe.' },
     }
-    const info = errorMessages[error.code] || { title: 'Error', description: error.message, emoji: '❌' }
+    const { title, desc } = msgs[error.code] ?? { title: 'Error', desc: error.message }
 
     return (
-      <div className="min-h-screen bg-gray-100 flex items-center justify-center p-4">
-        <div className="bg-white rounded-lg shadow-lg p-8 max-w-md text-center">
-          <div className="text-6xl mb-4">{info.emoji}</div>
-          <h1 className="text-xl font-bold text-gray-900 mb-2">{info.title}</h1>
-          <p className="text-gray-600">{info.description}</p>
+      <div className="min-h-screen bg-gray-100 flex items-center justify-center p-6">
+        <div className="bg-white rounded-2xl shadow-lg p-8 max-w-sm w-full text-center">
+          <div className="w-16 h-16 bg-red-100 rounded-full flex items-center justify-center mx-auto mb-4">
+            <svg className="w-8 h-8 text-red-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
+                d="M12 9v3.75m-9.303 3.376a12 12 0 1021.593 0M12 15.75h.007v.008H12v-.008z" />
+            </svg>
+          </div>
+          <h1 className="text-xl font-bold text-gray-900 mb-2">{title}</h1>
+          <p className="text-gray-500 text-sm leading-relaxed">{desc}</p>
         </div>
       </div>
     )
   }
 
-  // Render loading state
+  // ── Loading ───────────────────────────────────────────────
   if (appState === 'loading' || !experience) {
     return (
       <div className="min-h-screen bg-gray-100 flex items-center justify-center">
         <div className="text-center">
           <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto mb-4" />
-          <p className="text-gray-600">Cargando experiencia...</p>
+          <p className="text-gray-500">Cargando experiencia...</p>
         </div>
       </div>
     )
   }
 
-  // Render main experience
+  // ── Helpers ───────────────────────────────────────────────
+  const isAR = appState === 'ar-scanning' || appState === 'ar-placed'
+
+  // ── Main render ───────────────────────────────────────────
+  // Canvas is ALWAYS rendered at the same DOM position so Babylon
+  // never loses its context across state transitions.
+  // Non-AR states cover it with an opaque layer; AR states show
+  // semi-transparent overlays on top.
   return (
-    <div className="min-h-screen bg-gray-900 flex flex-col">
-      {/* Header */}
-      <header className="bg-white shadow-sm px-4 py-3 z-20 relative">
-        <div className="flex items-center justify-between">
-          <div>
+    <div className="h-screen overflow-hidden relative bg-black">
+
+      {/* ── Canvas (always mounted, full-screen) ── */}
+      <canvas
+        ref={canvasRef}
+        className="absolute inset-0 w-full h-full"
+        style={{ touchAction: 'none' }}
+      />
+
+      {/* ══════════════════════════════════════════════════════
+          READY STATE — opaque cover with preview + buttons
+          ══════════════════════════════════════════════════════ */}
+      {appState === 'ready' && (
+        <div className="absolute inset-0 z-10 flex flex-col bg-gray-100">
+          {/* Header */}
+          <header className="bg-white shadow-sm px-5 py-4 shrink-0">
             <h1 className="text-lg font-semibold text-gray-900">{experience.product.name}</h1>
-            <p className="text-sm text-gray-500">{experience.product.versionLabel}</p>
+            <p className="text-sm text-gray-400">{experience.product.versionLabel}</p>
+          </header>
+
+          {/* Preview */}
+          <main className="flex-1 flex flex-col items-center justify-center p-6">
+            {experience.assets.thumbUrl && (
+              <img
+                src={experience.assets.thumbUrl}
+                alt={experience.product.name}
+                className="w-56 h-56 object-contain mb-6 rounded-xl shadow-md"
+              />
+            )}
+            <h2 className="text-xl font-bold text-gray-900 mb-2 text-center">
+              {experience.product.name}
+            </h2>
+            <p className="text-gray-500 text-sm text-center mb-8 max-w-xs">
+              {isARSupported || (isIOSDevice && experience.assets.usdzUrl)
+                ? 'Coloca este modelo a escala real en tu entorno'
+                : 'Visualiza este modelo en 3D'}
+            </p>
+
+            <div className="w-full max-w-xs flex flex-col gap-3">
+              {/* AR primary */}
+              {isARSupported && !isIOSDevice && (
+                <button
+                  onClick={startARSession}
+                  className="w-full py-4 bg-blue-600 text-white rounded-2xl font-semibold text-base shadow-md active:bg-blue-700"
+                >
+                  Iniciar AR
+                </button>
+              )}
+              {isIOSDevice && experience.assets.usdzUrl && (
+                <a
+                  href={experience.assets.usdzUrl}
+                  rel="ar"
+                  className="w-full py-4 bg-blue-600 text-white rounded-2xl font-semibold text-base text-center shadow-md"
+                >
+                  Ver en AR
+                </a>
+              )}
+
+              {/* 3-D viewer (always available as secondary) */}
+              <button
+                onClick={initViewerFallback}
+                className="w-full py-3.5 bg-white border border-gray-300 text-gray-700 rounded-2xl font-medium text-base active:bg-gray-50"
+              >
+                Ver en 3D
+              </button>
+            </div>
+          </main>
+
+          {/* Footer */}
+          <footer className="bg-white border-t px-5 py-3 shrink-0">
+            <div className="flex items-center justify-between text-xs text-gray-400">
+              <span>
+                {experience.share.remainingVisits !== null
+                  ? `${experience.share.remainingVisits} visitas restantes`
+                  : 'Visitas ilimitadas'}
+              </span>
+              <span>Expira: {new Date(experience.share.expiresAt).toLocaleDateString('es-AR')}</span>
+            </div>
+          </footer>
+        </div>
+      )}
+
+      {/* ══════════════════════════════════════════════════════
+          VIEWER FALLBACK — header/footer over the 3-D canvas
+          ══════════════════════════════════════════════════════ */}
+      {appState === 'viewer-fallback' && (
+        <div className="absolute inset-0 z-10 flex flex-col pointer-events-none">
+          <header className="bg-white/95 backdrop-blur-sm shadow-sm px-5 py-3 pointer-events-auto shrink-0">
+            <h1 className="text-base font-semibold text-gray-900">{experience.product.name}</h1>
+            <p className="text-xs text-gray-400">{experience.product.versionLabel}</p>
+          </header>
+
+          <div className="flex-1" />
+
+          {/* Gesture hint */}
+          <div className="flex justify-center pb-4">
+            <div className="bg-black/55 backdrop-blur-sm text-white text-xs px-4 py-2 rounded-full">
+              Arrastrar para rotar · Pellizcar para zoom
+            </div>
           </div>
 
-          {/* Action buttons */}
-          <div className="flex items-center gap-2">
-            {appState === 'ready' && (
-              <>
-                {/* WebXR AR button (Android/Desktop) */}
-                {isARSupported && !isIOSDevice && (
-                  <button
-                    onClick={startARSession}
-                    className="px-4 py-2 bg-blue-600 text-white rounded-lg font-medium hover:bg-blue-700 flex items-center gap-2"
-                  >
-                    <span>Iniciar AR</span>
-                    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
-                    </svg>
-                  </button>
-                )}
+          <footer className="bg-white/95 backdrop-blur-sm border-t px-5 py-2 pointer-events-auto shrink-0">
+            <div className="flex items-center justify-between text-xs text-gray-400">
+              <span>
+                {experience.share.remainingVisits !== null
+                  ? `${experience.share.remainingVisits} visitas restantes`
+                  : 'Visitas ilimitadas'}
+              </span>
+              <span>Expira: {new Date(experience.share.expiresAt).toLocaleDateString('es-AR')}</span>
+            </div>
+          </footer>
+        </div>
+      )}
 
-                {/* iOS Quick Look */}
-                {isIOSDevice && experience.assets.usdzUrl && (
-                  <a
-                    href={experience.assets.usdzUrl}
-                    rel="ar"
-                    className="px-4 py-2 bg-blue-600 text-white rounded-lg font-medium hover:bg-blue-700 flex items-center gap-2"
-                  >
-                    <span>Ver en AR</span>
-                    {experience.assets.thumbUrl && (
-                      <img src={experience.assets.thumbUrl} alt="" className="hidden" />
-                    )}
-                  </a>
-                )}
+      {/* ══════════════════════════════════════════════════════
+          AR STATES — overlays on top of the live camera feed.
+          Outer wrapper is pointer-events-none so taps fall
+          through to the canvas (→ our touchend handler).
+          Only interactive controls get pointer-events-auto.
+          ══════════════════════════════════════════════════════ */}
+      {isAR && (
+        <div className="absolute inset-0 z-20 pointer-events-none">
 
-                {/* Fallback viewer button */}
-                {(!isARSupported || (isIOSDevice && !experience.assets.usdzUrl)) && (
-                  <button
-                    onClick={initViewerFallback}
-                    className="px-4 py-2 bg-gray-600 text-white rounded-lg font-medium hover:bg-gray-700"
-                  >
-                    Ver en 3D
-                  </button>
-                )}
-              </>
-            )}
-
-            {/* Exit AR button */}
-            {(appState === 'ar-scanning' || appState === 'ar-placed') && (
+          {/* ── Top gradient bar ── */}
+          <div className="absolute top-0 left-0 right-0 bg-gradient-to-b from-black/70 via-black/30 to-transparent pt-10 pb-10 px-5 pointer-events-auto">
+            <div className="flex items-center justify-between">
+              {/* Exit */}
               <button
                 onClick={exitAR}
-                className="px-4 py-2 bg-red-600 text-white rounded-lg font-medium hover:bg-red-700"
+                className="w-11 h-11 bg-black/50 backdrop-blur-sm rounded-full flex items-center justify-center active:bg-black/75"
               >
-                Salir
+                <svg className="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M6 18L18 6M6 6l12 12" />
+                </svg>
               </button>
-            )}
-          </div>
-        </div>
-      </header>
 
-      {/* Main content */}
-      <main className="flex-1 relative">
-        {/* Canvas for 3D/AR */}
-        <canvas
-          ref={canvasRef}
-          className="w-full h-full touch-none"
-          style={{ minHeight: 'calc(100vh - 140px)' }}
-        />
-
-        {/* Status message overlay */}
-        {statusMessage && (
-          <div className="absolute top-4 left-1/2 -translate-x-1/2 bg-black/70 text-white px-4 py-2 rounded-lg z-10">
-            {statusMessage}
-          </div>
-        )}
-
-        {/* AR Scanning instructions */}
-        {appState === 'ar-scanning' && (
-          <div className="absolute bottom-32 left-1/2 -translate-x-1/2 text-center z-10">
-            <div className="bg-black/70 text-white px-6 py-3 rounded-lg">
-              <p className="text-sm mb-2">Apunta al piso para detectar la superficie</p>
-              <p className="text-xs text-gray-300">Toca la pantalla para colocar el modelo</p>
-            </div>
-          </div>
-        )}
-
-        {/* AR Placed controls */}
-        {appState === 'ar-placed' && (
-          <div className="absolute bottom-4 left-4 right-4 z-10">
-            <div className="bg-white rounded-lg shadow-lg p-4">
-              <div className="flex items-center justify-between mb-4">
-                <span className="text-sm font-medium text-gray-700">Modelo colocado</span>
-                <button
-                  onClick={resetPlacement}
-                  className="text-sm text-blue-600 hover:text-blue-800"
-                >
-                  Reposicionar
-                </button>
-              </div>
-
-              {/* Rotation control */}
-              <div className="mb-4">
-                <label className="block text-xs text-gray-500 mb-1">
-                  Rotación: {rotation}°
-                </label>
-                <input
-                  type="range"
-                  min="0"
-                  max="360"
-                  value={rotation}
-                  onChange={(e) => handleRotationChange(parseInt(e.target.value))}
-                  className="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer"
-                />
-              </div>
-
-              {/* Move toggle */}
-              <div className="flex items-center justify-between">
-                <button
-                  onClick={() => setIsMoving(!isMoving)}
-                  className={`px-4 py-2 rounded-lg font-medium text-sm ${
-                    isMoving
-                      ? 'bg-green-600 text-white'
-                      : 'bg-gray-200 text-gray-700'
-                  }`}
-                >
-                  {isMoving ? 'Mover: ON' : 'Mover: OFF'}
-                </button>
-                <p className="text-xs text-gray-500">
-                  {isMoving ? 'Apunta al piso y toca para mover' : 'Activa para reposicionar'}
-                </p>
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* Viewer fallback controls */}
-        {appState === 'viewer-fallback' && (
-          <div className="absolute bottom-4 left-4 bg-white/90 backdrop-blur-sm rounded-lg px-3 py-2 text-sm text-gray-600 z-10">
-            <p>🖱️ Arrastrar para rotar • Scroll para zoom</p>
-          </div>
-        )}
-
-        {/* Ready state - show preview and instructions */}
-        {appState === 'ready' && (
-          <div className="absolute inset-0 flex items-center justify-center bg-gray-100">
-            <div className="text-center p-8">
-              {experience.assets.thumbUrl && (
-                <img
-                  src={experience.assets.thumbUrl}
-                  alt={experience.product.name}
-                  className="w-64 h-64 object-contain mx-auto mb-6 rounded-lg shadow-lg"
-                />
-              )}
-              <h2 className="text-xl font-semibold text-gray-900 mb-2">
+              {/* Product name */}
+              <span className="text-white text-sm font-semibold drop-shadow-md">
                 {experience.product.name}
-              </h2>
-              <p className="text-gray-600 mb-6">
-                {isARSupported || (isIOSDevice && experience.assets.usdzUrl)
-                  ? 'Coloca este modelo a escala real en tu espacio'
-                  : 'Visualiza este modelo en 3D'}
-              </p>
+              </span>
 
-              {/* Device-specific instructions */}
-              {isIOSDevice && !experience.assets.usdzUrl && (
-                <p className="text-sm text-amber-600 bg-amber-50 px-4 py-2 rounded-lg">
-                  AR no disponible en iOS para este modelo. Usa el visor 3D.
-                </p>
-              )}
+              {/* Spacer */}
+              <div className="w-11" />
             </div>
           </div>
-        )}
-      </main>
 
-      {/* Footer with share info */}
-      <footer className="bg-white border-t px-4 py-2 z-20 relative">
-        <div className="flex items-center justify-between text-sm text-gray-500">
-          <span>
-            {experience.share.remainingVisits !== null
-              ? `${experience.share.remainingVisits} visitas restantes`
-              : 'Visitas ilimitadas'}
-          </span>
-          <span>
-            Expira: {new Date(experience.share.expiresAt).toLocaleDateString('es-AR')}
-          </span>
+          {/* ── SCANNING: animated target + instructions ── */}
+          {appState === 'ar-scanning' && (
+            <div className="absolute inset-0 flex flex-col items-center justify-end pb-20 px-5">
+              {/* Animated target rings */}
+              <div className="mb-8 relative flex items-center justify-center w-28 h-28">
+                <div className="absolute inset-0 rounded-full border-2 border-white/20 animate-ping" />
+                <div className="w-22 h-22 rounded-full border-2 border-white/50 flex items-center justify-center"
+                  style={{ width: '5.5rem', height: '5.5rem' }}>
+                  <div className="w-14 h-14 rounded-full border-2 border-white/70 flex items-center justify-center">
+                    <div className="w-2 h-2 rounded-full bg-white shadow-lg" />
+                  </div>
+                </div>
+              </div>
+
+              {/* Instruction card */}
+              <div className="bg-black/75 backdrop-blur-md rounded-2xl px-5 py-5 text-center max-w-xs w-full">
+                <p className="text-white font-semibold text-base mb-2">
+                  Busca una superficie plana
+                </p>
+                <p className="text-white/55 text-sm leading-relaxed">
+                  Apunta al piso y mueve el teléfono despacio. Cuando aparezca
+                  el círculo verde, toca la pantalla para colocar el modelo.
+                </p>
+              </div>
+            </div>
+          )}
+
+          {/* ── PLACED (not moving): bottom-sheet controls ── */}
+          {appState === 'ar-placed' && !isMoving && (
+            <div className="absolute bottom-0 left-0 right-0 pointer-events-auto">
+              <div className="bg-white/95 backdrop-blur-lg rounded-t-3xl shadow-2xl px-5 pt-3 pb-8">
+                {/* Drag handle */}
+                <div className="w-10 h-1 bg-gray-300 rounded-full mx-auto mb-4" />
+
+                {/* Title row */}
+                <div className="flex items-center justify-between mb-5">
+                  <h3 className="font-bold text-gray-900 text-base">Modelo colocado</h3>
+                  <button
+                    onClick={resetPlacement}
+                    className="flex items-center gap-1.5 text-blue-600 text-sm font-semibold active:text-blue-800"
+                  >
+                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
+                        d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                    </svg>
+                    Reposicionar
+                  </button>
+                </div>
+
+                {/* Rotation slider */}
+                <div className="mb-5">
+                  <div className="flex justify-between items-center mb-2">
+                    <span className="text-sm font-medium text-gray-600">Rotación</span>
+                    <span className="text-sm font-bold text-gray-900">{rotation}°</span>
+                  </div>
+                  <input
+                    type="range"
+                    min="0"
+                    max="360"
+                    value={rotation}
+                    onChange={(e) => handleRotationChange(parseInt(e.target.value))}
+                    className="w-full h-2.5 bg-gray-200 rounded-full appearance-none cursor-pointer accent-blue-600"
+                  />
+                  <div className="flex justify-between text-xs text-gray-400 mt-1.5">
+                    <span>0°</span><span>90°</span><span>180°</span><span>270°</span><span>360°</span>
+                  </div>
+                </div>
+
+                {/* Move button */}
+                <button
+                  onClick={() => setIsMoving(true)}
+                  className="w-full py-3.5 bg-blue-600 text-white rounded-2xl font-semibold text-base shadow-md active:bg-blue-700"
+                >
+                  Mover modelo
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* ── PLACED + moving: reposition instructions ── */}
+          {appState === 'ar-placed' && isMoving && (
+            <div className="absolute inset-0 flex flex-col items-center justify-end pb-20 px-5">
+              <div className="bg-black/75 backdrop-blur-md rounded-2xl px-5 py-5 text-center max-w-xs w-full">
+                <p className="text-white font-semibold text-base mb-2">
+                  Reposicionando
+                </p>
+                <p className="text-white/55 text-sm leading-relaxed">
+                  Apunta al nuevo lugar y toca la pantalla para confirmar la posición.
+                </p>
+              </div>
+            </div>
+          )}
         </div>
-      </footer>
+      )}
     </div>
   )
 }
