@@ -15,6 +15,7 @@ import { authRouter } from './modules/auth/index'
 import { projectsRouter } from './modules/projects/index'
 import { productsRouter } from './modules/products/index'
 import { versionsRouter } from './modules/versions/index'
+import { assetsRouter } from './modules/assets/index'
 
 export function createApp(): Express {
   const app = express()
@@ -81,9 +82,9 @@ export function createApp(): Express {
   app.use('/api/projects', projectsRouter)
   app.use('/api/products', productsRouter)
   app.use('/api/versions', versionsRouter)
+  app.use('/api/assets', assetsRouter)
 
   // TODO: Add module routes here as they are implemented
-  // app.use('/api/assets', assetsRouter)
   // app.use('/api/shares', sharesRouter)
   // app.use('/api/public', publicRouter)
 

@@ -1,9 +1,23 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { useParams } from 'next/navigation'
 import Link from 'next/link'
-import { projectsApi, productsApi, versionsApi, Project, Product, Version, ApiClientError } from '@/lib/api'
+import {
+  projectsApi,
+  productsApi,
+  versionsApi,
+  assetsApi,
+  Project,
+  Product,
+  Version,
+  Asset,
+  ApiClientError,
+} from '@/lib/api'
+
+interface VersionWithAssets extends Version {
+  assets: Asset[]
+}
 
 export default function VersionsPage() {
   const params = useParams()
@@ -12,7 +26,7 @@ export default function VersionsPage() {
 
   const [project, setProject] = useState<Project | null>(null)
   const [product, setProduct] = useState<Product | null>(null)
-  const [versions, setVersions] = useState<Version[]>([])
+  const [versions, setVersions] = useState<VersionWithAssets[]>([])
   const [isLoading, setIsLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
 
@@ -25,6 +39,12 @@ export default function VersionsPage() {
 
   // Delete confirmation state
   const [deletingId, setDeletingId] = useState<string | null>(null)
+
+  // Upload state
+  const [uploadingVersionId, setUploadingVersionId] = useState<string | null>(null)
+  const [uploadProgress, setUploadProgress] = useState(0)
+  const [uploadError, setUploadError] = useState<string | null>(null)
+  const fileInputRef = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
     loadData()
@@ -41,7 +61,19 @@ export default function VersionsPage() {
       ])
       setProject(projectData)
       setProduct(productData)
-      setVersions(versionsData)
+
+      // Load assets for each version
+      const versionsWithAssets = await Promise.all(
+        versionsData.map(async (version) => {
+          try {
+            const assets = await assetsApi.list(version.id)
+            return { ...version, assets }
+          } catch {
+            return { ...version, assets: [] }
+          }
+        })
+      )
+      setVersions(versionsWithAssets)
     } catch (err) {
       if (err instanceof ApiClientError) {
         setError(err.message)
@@ -122,6 +154,134 @@ export default function VersionsPage() {
     }
   }
 
+  function triggerFileInput(versionId: string) {
+    setUploadingVersionId(versionId)
+    setUploadError(null)
+    fileInputRef.current?.click()
+  }
+
+  async function handleFileChange(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0]
+    if (!file || !uploadingVersionId) return
+
+    // Reset file input
+    e.target.value = ''
+
+    // Validate file
+    if (!file.name.toLowerCase().endsWith('.glb')) {
+      setUploadError('Solo se permiten archivos .glb')
+      setUploadingVersionId(null)
+      return
+    }
+
+    // Max 100MB
+    if (file.size > 104857600) {
+      setUploadError('El archivo es demasiado grande (máx. 100MB)')
+      setUploadingVersionId(null)
+      return
+    }
+
+    setUploadProgress(0)
+
+    try {
+      await assetsApi.uploadGlb(uploadingVersionId, file, (progress) => {
+        setUploadProgress(progress)
+      })
+      setUploadingVersionId(null)
+      setUploadProgress(0)
+      loadData()
+    } catch (err) {
+      if (err instanceof ApiClientError) {
+        setUploadError(err.message)
+      } else if (err instanceof Error) {
+        setUploadError(err.message)
+      } else {
+        setUploadError('Error al subir el archivo')
+      }
+      setUploadingVersionId(null)
+      setUploadProgress(0)
+    }
+  }
+
+  function getAssetStatus(version: VersionWithAssets) {
+    const sourceAsset = version.assets.find((a) => a.kind === 'SOURCE_GLB')
+    if (!sourceAsset) return null
+    return sourceAsset
+  }
+
+  function renderAssetStatus(version: VersionWithAssets) {
+    const asset = getAssetStatus(version)
+
+    if (uploadingVersionId === version.id) {
+      return (
+        <div className="flex items-center gap-2">
+          <div className="w-24 h-2 bg-gray-200 rounded-full overflow-hidden">
+            <div
+              className="h-full bg-primary-600 transition-all duration-300"
+              style={{ width: `${uploadProgress}%` }}
+            />
+          </div>
+          <span className="text-xs text-gray-500">{uploadProgress}%</span>
+        </div>
+      )
+    }
+
+    if (!asset) {
+      return (
+        <button
+          onClick={() => triggerFileInput(version.id)}
+          className="text-sm text-primary-600 hover:text-primary-700 font-medium"
+        >
+          Subir modelo 3D
+        </button>
+      )
+    }
+
+    const statusStyles: Record<string, string> = {
+      PENDING_UPLOAD: 'bg-yellow-100 text-yellow-800',
+      UPLOADED: 'bg-blue-100 text-blue-800',
+      PROCESSING: 'bg-blue-100 text-blue-800',
+      READY: 'bg-green-100 text-green-800',
+      FAILED: 'bg-red-100 text-red-800',
+    }
+
+    const statusLabels: Record<string, string> = {
+      PENDING_UPLOAD: 'Pendiente',
+      UPLOADED: 'Subido',
+      PROCESSING: 'Procesando...',
+      READY: 'Listo',
+      FAILED: 'Error',
+    }
+
+    return (
+      <div className="flex items-center gap-2">
+        <span
+          className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${
+            statusStyles[asset.status]
+          }`}
+        >
+          {statusLabels[asset.status]}
+        </span>
+        {asset.status === 'FAILED' && (
+          <button
+            onClick={() => triggerFileInput(version.id)}
+            className="text-xs text-primary-600 hover:text-primary-700"
+          >
+            Reintentar
+          </button>
+        )}
+        {asset.status === 'READY' && (
+          <button
+            onClick={() => triggerFileInput(version.id)}
+            className="text-xs text-gray-500 hover:text-gray-700"
+          >
+            Reemplazar
+          </button>
+        )}
+      </div>
+    )
+  }
+
   if (isLoading) {
     return (
       <div className="flex items-center justify-center py-12">
@@ -132,6 +292,15 @@ export default function VersionsPage() {
 
   return (
     <div>
+      {/* Hidden file input */}
+      <input
+        ref={fileInputRef}
+        type="file"
+        accept=".glb"
+        onChange={handleFileChange}
+        className="hidden"
+      />
+
       {/* Breadcrumb */}
       <nav className="mb-4 text-sm">
         <Link href="/projects" className="text-primary-600 hover:text-primary-700">
@@ -169,6 +338,18 @@ export default function VersionsPage() {
         </div>
       )}
 
+      {uploadError && (
+        <div className="mb-4 rounded-md bg-red-50 p-4 flex justify-between items-center">
+          <p className="text-sm text-red-700">{uploadError}</p>
+          <button
+            onClick={() => setUploadError(null)}
+            className="text-red-700 hover:text-red-900"
+          >
+            ×
+          </button>
+        </div>
+      )}
+
       {versions.length === 0 ? (
         <div className="text-center py-12 bg-white rounded-lg shadow-sm border border-gray-200">
           <p className="text-gray-500">No hay versiones de este producto</p>
@@ -188,6 +369,9 @@ export default function VersionsPage() {
                   Etiqueta
                 </th>
                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  Modelo 3D
+                </th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                   Notas
                 </th>
                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
@@ -205,6 +389,9 @@ export default function VersionsPage() {
                     <span className="text-sm font-medium text-gray-900">
                       {version.label}
                     </span>
+                  </td>
+                  <td className="px-6 py-4 whitespace-nowrap">
+                    {renderAssetStatus(version)}
                   </td>
                   <td className="px-6 py-4">
                     <p className="text-sm text-gray-500 truncate max-w-xs">
