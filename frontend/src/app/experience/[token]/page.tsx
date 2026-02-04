@@ -324,30 +324,16 @@ export default function ExperiencePage() {
     setAppState('ready')
   }, [cleanup])
 
-  // ── Tap handler ───────────────────────────────────────────
-  // Uses refs so it never needs to re-register on state change.
-  // Handles two actions depending on current state:
-  //   ar-scanning  → place the model
-  //   ar-placed + moving → confirm new position (stop moving)
-  useEffect(() => {
-    const canvas = canvasRef.current
-    if (!canvas) return
-
-    const onTap = () => {
-      const state = appStateRef.current
-      if (state === 'ar-scanning' && lastHitPoseRef.current) {
-        placeModel()
-      } else if (state === 'ar-placed' && isMovingRef.current) {
-        setIsMoving(false)
-        if (reticleRef.current) reticleRef.current.isVisible = false
-      }
-    }
-
-    canvas.addEventListener('click', onTap)
-    canvas.addEventListener('touchend', onTap)
-    return () => {
-      canvas.removeEventListener('click', onTap)
-      canvas.removeEventListener('touchend', onTap)
+  // ── Tap to place / confirm ────────────────────────────────
+  // En immersive-ar + dom-overlay los taps no llegan al canvas.
+  // Se usa un div tap-catcher con pointer-events-auto (ver JSX abajo).
+  const handleTapToPlace = useCallback(() => {
+    const state = appStateRef.current
+    if (state === 'ar-scanning' && lastHitPoseRef.current) {
+      placeModel()
+    } else if (state === 'ar-placed' && isMovingRef.current) {
+      setIsMoving(false)
+      if (reticleRef.current) reticleRef.current.isVisible = false
     }
   }, [placeModel])
 
@@ -519,12 +505,22 @@ export default function ExperiencePage() {
       {/* ══════════════════════════════════════════════════════
           AR STATES — overlays encima de la vista AR.
           Div siempre montado para que WebXR dom-overlay lo referencie.
-          pointer-events-none → taps pasan al canvas (touchend handler).
-          Solo los controles interactivos tienen pointer-events-auto.
+          pointer-events-none en el wrapper; el tap-catcher hijo tiene
+          pointer-events-auto y captura los taps de placement.
           ══════════════════════════════════════════════════════ */}
       <div ref={overlayRef} className="absolute inset-0 z-20 pointer-events-none">
         {isAR && (
           <>
+
+          {/* Tap-catcher: captura taps durante scanning / movimiento.
+              Primer hijo → los botones (siblings siguientes) apilan encima. */}
+          {(appState === 'ar-scanning' || (appState === 'ar-placed' && isMoving)) && (
+            <div
+              className="absolute inset-0 pointer-events-auto"
+              style={{ touchAction: 'manipulation' }}
+              onClick={handleTapToPlace}
+            />
+          )}
 
           {/* ── Top gradient bar ── */}
           <div className="absolute top-0 left-0 right-0 bg-gradient-to-b from-black/70 via-black/30 to-transparent pt-10 pb-10 px-5 pointer-events-auto">
