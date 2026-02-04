@@ -61,6 +61,7 @@ export default function VersionsPage() {
   const [createdShareUrl, setCreatedShareUrl] = useState<string | null>(null)
   const [shareError, setShareError] = useState<string | null>(null)
   const [isCreatingShare, setIsCreatingShare] = useState(false)
+  const [copied, setCopied] = useState(false)
 
   useEffect(() => {
     loadData()
@@ -329,8 +330,22 @@ export default function VersionsPage() {
     }
   }
 
-  function copyToClipboard(text: string) {
-    navigator.clipboard.writeText(text)
+  async function copyToClipboard(text: string) {
+    try {
+      await navigator.clipboard.writeText(text)
+    } catch {
+      // fallback para contextos no-secure
+      const ta = document.createElement('textarea')
+      ta.value = text
+      ta.style.position = 'fixed'
+      ta.style.opacity = '0'
+      document.body.appendChild(ta)
+      ta.select()
+      document.execCommand('copy')
+      document.body.removeChild(ta)
+    }
+    setCopied(true)
+    setTimeout(() => setCopied(false), 1500)
   }
 
   function canShare(version: VersionWithAssets) {
@@ -704,9 +719,9 @@ export default function VersionsPage() {
                     />
                     <button
                       onClick={() => copyToClipboard(createdShareUrl)}
-                      className="px-3 py-1 text-sm bg-green-600 text-white rounded hover:bg-green-700"
+                      className={`px-3 py-1 text-sm text-white rounded transition-colors ${copied ? 'bg-green-700' : 'bg-green-600 hover:bg-green-700'}`}
                     >
-                      Copiar
+                      {copied ? 'Copiado' : 'Copiar'}
                     </button>
                   </div>
                 </div>

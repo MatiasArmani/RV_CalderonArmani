@@ -199,6 +199,7 @@ export default function ExperiencePage() {
     // WebXR
     try {
       const xr = await BABYLON.WebXRDefaultExperience.CreateAsync(scene, {
+        disableDefaultUI: true,
         uiOptions: { sessionMode: 'immersive-ar' },
         optionalFeatures: true,
       })
