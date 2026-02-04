@@ -26,6 +26,7 @@ export default function ExperiencePage() {
   const modelRef = useRef<import('@babylonjs/core').AbstractMesh | null>(null)
   const reticleRef = useRef<import('@babylonjs/core').Mesh | null>(null)
   const lastHitPoseRef = useRef<import('@babylonjs/core').Matrix | null>(null)
+  const overlayRef = useRef<HTMLDivElement>(null)
 
   // ── State refs: lets WebXR/Babylon callbacks read current
   //    React state without stale closures ─────────────────────
@@ -141,6 +142,7 @@ export default function ExperiencePage() {
     await import('@babylonjs/loaders/glTF')
     const { SceneLoader } = await import('@babylonjs/core/Loading/sceneLoader')
     await import('@babylonjs/core/XR/features/WebXRHitTest')
+    await import('@babylonjs/core/XR/features/WebXRDOMOverlay')
 
     // Engine + scene
     const engine = new BABYLON.Engine(canvas, true, {
@@ -245,6 +247,15 @@ export default function ExperiencePage() {
           if (reticleRef.current) reticleRef.current.isVisible = false
         }
       })
+
+      // dom-overlay: permite que los HTML overlays se compositen encima de la vista AR
+      if (overlayRef.current) {
+        xr.baseExperience.featuresManager.enableFeature(
+          BABYLON.WebXRFeatureName.DOM_OVERLAY,
+          'latest',
+          { element: overlayRef.current }
+        )
+      }
 
       // Enter AR
       await xr.baseExperience.enterXRAsync('immersive-ar', 'unbounded')
@@ -506,13 +517,14 @@ export default function ExperiencePage() {
       )}
 
       {/* ══════════════════════════════════════════════════════
-          AR STATES — overlays on top of the live camera feed.
-          Outer wrapper is pointer-events-none so taps fall
-          through to the canvas (→ our touchend handler).
-          Only interactive controls get pointer-events-auto.
+          AR STATES — overlays encima de la vista AR.
+          Div siempre montado para que WebXR dom-overlay lo referencie.
+          pointer-events-none → taps pasan al canvas (touchend handler).
+          Solo los controles interactivos tienen pointer-events-auto.
           ══════════════════════════════════════════════════════ */}
-      {isAR && (
-        <div className="absolute inset-0 z-20 pointer-events-none">
+      <div ref={overlayRef} className="absolute inset-0 z-20 pointer-events-none">
+        {isAR && (
+          <>
 
           {/* ── Top gradient bar ── */}
           <div className="absolute top-0 left-0 right-0 bg-gradient-to-b from-black/70 via-black/30 to-transparent pt-10 pb-10 px-5 pointer-events-auto">
@@ -629,8 +641,9 @@ export default function ExperiencePage() {
               </div>
             </div>
           )}
-        </div>
-      )}
+          </>
+        )}
+      </div>
     </div>
   )
 }
