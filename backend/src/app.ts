@@ -53,6 +53,8 @@ export function createApp(): Express {
     'https://localhost:3000',
     'http://192.168.137.1:3000',
     'https://192.168.137.1:3000',
+    "http://26.129.197.142:3000",
+    "https://26.129.197.142:3000",
   ]
 
   app.use(
