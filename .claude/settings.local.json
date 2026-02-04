@@ -9,7 +9,10 @@
       "Bash(curl:*)",
       "Bash(npx prisma db execute:*)",
       "Bash(node -e:*)",
-      "Bash(npx tsc:*)"
+      "Bash(npx tsc:*)",
+      "Bash(tasklist:*)",
+      "Bash(netstat -ano)",
+      "Bash(ss:*)"
     ]
   }
 }

@@ -2,9 +2,15 @@
 const nextConfig = {
   reactStrictMode: true,
 
-  // Environment variables available to the client
-  env: {
-    NEXT_PUBLIC_API_URL: process.env.NEXT_PUBLIC_API_URL || 'http://localhost:4000',
+  // Proxy /api/* to the backend so browser calls are same-origin (no CORS)
+  async rewrites() {
+    const backendUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:4000'
+    return [
+      {
+        source: '/api/:path*',
+        destination: `${backendUrl}/api/:path*`,
+      },
+    ]
   },
 
   // Image optimization domains (S3)
