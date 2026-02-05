@@ -29,7 +29,9 @@
       "Bash(timeout 8 npm run dev:*)",
       "Bash(timeout 12 npm run dev:*)",
       "Bash(aws:*)",
-      "Bash(aws configure:*)"
+      "Bash(aws configure:*)",
+      "Bash(grep:*)",
+      "Bash(wc:*)"
     ]
   }
 }
