@@ -286,7 +286,7 @@ export default function VersionsPage() {
         maxVisits: shareFormData.maxVisits ? parseInt(shareFormData.maxVisits) : null,
       })
 
-      setCreatedShareUrl(result.url)
+      setCreatedShareUrl(`${window.location.origin}/experience/${result.token}`)
       // Refresh shares list
       const sharesData = await sharesApi.list(sharingVersionId)
       setShares(sharesData)

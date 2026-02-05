@@ -12,7 +12,24 @@
       "Bash(npx tsc:*)",
       "Bash(tasklist:*)",
       "Bash(netstat -ano)",
-      "Bash(ss:*)"
+      "Bash(ss:*)",
+      "Bash(tree:*)",
+      "Bash(test:*)",
+      "Bash(node --version:*)",
+      "Bash(npx prisma generate:*)",
+      "Bash(npm run prisma:generate:*)",
+      "Bash(npm config:*)",
+      "Bash(# Check common PostgreSQL install paths on Windows find /c/Program\\\\ Files -name \"\"psql.exe\"\")",
+      "Read(//c//**)",
+      "Bash(export PATH=\"/c/Program Files/PostgreSQL/18/bin:$PATH\")",
+      "Bash(psql:*)",
+      "Bash(pg_isready:*)",
+      "Bash(PGPASSWORD='T#21&vAmA.' psql:*)",
+      "Bash(npm run prisma:migrate:*)",
+      "Bash(timeout 8 npm run dev:*)",
+      "Bash(timeout 12 npm run dev:*)",
+      "Bash(aws:*)",
+      "Bash(aws configure:*)"
     ]
   }
 }
