@@ -17,6 +17,7 @@ export default function AdminLayout({
   const navigation = [
     { name: 'Dashboard', href: '/dashboard' },
     { name: 'Proyectos', href: '/projects' },
+    { name: 'Visitas', href: '/visits' },
   ]
 
   // Redirect to login if not authenticated

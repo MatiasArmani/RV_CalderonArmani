@@ -2,7 +2,7 @@
 
 import { useEffect, useState, useRef, useCallback } from 'react'
 import { useParams } from 'next/navigation'
-import { getExperience, PublicApiError, type PublicExperience } from '@/lib/api/public'
+import { getExperience, startVisit, endVisit, PublicApiError, type PublicExperience } from '@/lib/api/public'
 
 type AppState = 'loading' | 'ready' | 'error' | 'ar-scanning' | 'ar-placed' | 'viewer-fallback'
 
@@ -17,6 +17,11 @@ export default function ExperiencePage() {
   const [isIOSDevice, setIsIOSDevice] = useState(false)
   const [rotation, setRotation] = useState(0)
   const [isMoving, setIsMoving] = useState(false)
+
+  // ── Visit tracking ──────────────────────────────────────────
+  const [visitId, setVisitId] = useState<string | null>(null)
+  const visitStartTimeRef = useRef<number | null>(null)
+  const usedARRef = useRef(false)
 
   // ── Babylon refs ──────────────────────────────────────────
   const canvasRef = useRef<HTMLCanvasElement>(null)
@@ -42,6 +47,16 @@ export default function ExperiencePage() {
         const data = await getExperience(token)
         setExperience(data)
         setAppState('ready')
+
+        // Start visit tracking after experience loads
+        try {
+          const { visitId: vId } = await startVisit(token)
+          setVisitId(vId)
+          visitStartTimeRef.current = Date.now()
+        } catch {
+          // Silently ignore visit tracking errors
+          console.warn('Failed to start visit tracking')
+        }
       } catch (err) {
         if (err instanceof PublicApiError) {
           setError({ code: err.code, message: err.message })
@@ -53,6 +68,49 @@ export default function ExperiencePage() {
     }
     load()
   }, [token])
+
+  // ── Track AR usage ────────────────────────────────────────
+  useEffect(() => {
+    if (appState === 'ar-placed') {
+      usedARRef.current = true
+    }
+  }, [appState])
+
+  // ── End visit on unmount or page close ─────────────────────
+  useEffect(() => {
+    const handleEndVisit = () => {
+      if (visitId && visitStartTimeRef.current) {
+        const durationMs = Date.now() - visitStartTimeRef.current
+        // Use sendBeacon for reliable delivery on page close
+        const data = JSON.stringify({
+          visitId,
+          durationMs,
+          usedAR: usedARRef.current,
+        })
+        const blob = new Blob([data], { type: 'application/json' })
+        navigator.sendBeacon('/api/public/visits/end', blob)
+      }
+    }
+
+    const handleBeforeUnload = () => {
+      handleEndVisit()
+    }
+
+    window.addEventListener('beforeunload', handleBeforeUnload)
+    window.addEventListener('pagehide', handleBeforeUnload)
+
+    return () => {
+      window.removeEventListener('beforeunload', handleBeforeUnload)
+      window.removeEventListener('pagehide', handleBeforeUnload)
+      // Also try async call on component unmount (SPA navigation)
+      if (visitId && visitStartTimeRef.current) {
+        const durationMs = Date.now() - visitStartTimeRef.current
+        endVisit(visitId, durationMs, usedARRef.current).catch(() => {
+          // Silently ignore
+        })
+      }
+    }
+  }, [visitId])
 
   // ── Device / AR detection ─────────────────────────────────
   useEffect(() => {

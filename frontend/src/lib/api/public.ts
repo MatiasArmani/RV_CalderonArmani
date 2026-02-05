@@ -56,6 +56,84 @@ export async function getExperience(token: string): Promise<PublicExperience> {
   return data as PublicExperience
 }
 
+export interface StartVisitResponse {
+  visitId: string
+}
+
+export interface DeviceInfo {
+  ua: string
+  os: string
+  isMobile: boolean
+}
+
+/**
+ * Start tracking a visit
+ * Call this when the experience page loads
+ */
+export async function startVisit(
+  shareToken: string,
+  device?: DeviceInfo
+): Promise<StartVisitResponse> {
+  const response = await fetch(`${API_URL}/api/public/visits/start`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      shareToken,
+      device,
+    }),
+  })
+
+  const data = await response.json().catch(() => null)
+
+  if (!response.ok) {
+    const error = data?.error || {
+      code: 'UNKNOWN_ERROR',
+      message: 'An unexpected error occurred',
+    }
+    throw new PublicApiError(error.code, error.message, response.status)
+  }
+
+  return data as StartVisitResponse
+}
+
+/**
+ * End tracking a visit
+ * Call this when the user leaves the experience page
+ */
+export async function endVisit(
+  visitId: string,
+  durationMs: number,
+  usedAR: boolean
+): Promise<{ ok: boolean }> {
+  const response = await fetch(`${API_URL}/api/public/visits/end`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      visitId,
+      durationMs,
+      usedAR,
+    }),
+  })
+
+  const data = await response.json().catch(() => null)
+
+  if (!response.ok) {
+    const error = data?.error || {
+      code: 'UNKNOWN_ERROR',
+      message: 'An unexpected error occurred',
+    }
+    throw new PublicApiError(error.code, error.message, response.status)
+  }
+
+  return data as { ok: boolean }
+}
+
 export const publicApi = {
   getExperience,
+  startVisit,
+  endVisit,
 }

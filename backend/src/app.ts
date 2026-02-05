@@ -18,6 +18,7 @@ import { versionsRouter } from './modules/versions/index'
 import { assetsRouter } from './modules/assets/index'
 import { sharesRouter } from './modules/shares/index'
 import { publicRouter } from './modules/public/index'
+import { visitsRouter } from './modules/visits/index'
 
 export function createApp(): Express {
   const app = express()
@@ -93,6 +94,7 @@ export function createApp(): Express {
   app.use('/api/versions', versionsRouter)
   app.use('/api/assets', assetsRouter)
   app.use('/api/shares', sharesRouter)
+  app.use('/api/visits', visitsRouter)
   app.use('/api/public', publicRouter)
 
   // Global error handler (must be last)
