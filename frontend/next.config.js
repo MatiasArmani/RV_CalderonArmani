@@ -2,8 +2,15 @@
 const nextConfig = {
   reactStrictMode: true,
 
-  // Allow Next.js dev server to serve /_next/* assets to the LAN IP
-  allowedDevOrigins: ['https://192.168.137.1:3000', 'https://26.129.197.142:3000', 'https://10.77.86.68:3000'],
+  // Allow Next.js dev server to serve /_next/* assets to LAN IPs
+  // Only applies in dev mode; add new IPs here when switching networks
+  allowedDevOrigins: [
+    'https://10.64.196.68:3000',
+    'https://192.168.100.153:3000',
+    'https://192.168.137.1:3000',
+    'https://26.129.197.142:3000',
+    'https://10.77.86.68:3000',
+  ],
 
   // Proxy /api/* to the backend so browser calls are same-origin (no CORS)
   async rewrites() {

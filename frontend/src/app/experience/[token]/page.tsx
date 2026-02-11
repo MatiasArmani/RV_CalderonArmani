@@ -17,6 +17,7 @@ export default function ExperiencePage() {
   const [isIOSDevice, setIsIOSDevice] = useState(false)
   const [rotation, setRotation] = useState(0)
   const [isMoving, setIsMoving] = useState(false)
+  const [modelReady, setModelReady] = useState(false)
 
   // ── Visit tracking ──────────────────────────────────────────
   const [visitId, setVisitId] = useState<string | null>(null)
@@ -234,27 +235,14 @@ export default function ExperiencePage() {
     reticle.isVisible = false
     reticleRef.current = reticle
 
-    // Load model (hidden until placed)
-    try {
-      const { meshes } = await SceneLoader.ImportMeshAsync('', '', experience.assets.glbUrl, scene)
-      if (meshes.length > 0) {
-        const root = meshes[0]
-        root.setEnabled(false)
-        root.position = BABYLON.Vector3.Zero()
-        root.rotationQuaternion = null   // use Euler so rotation slider works
-        root.rotation = BABYLON.Vector3.Zero()
-        modelRef.current = root
-      }
-    } catch (err) {
-      setError({
-        code: 'LOAD_ERROR',
-        message: `Error al cargar el modelo 3D: ${err instanceof Error ? err.message : String(err)}`,
-      })
-      setAppState('error')
-      return
-    }
+    // Start render loop early (needed for WebXR)
+    engine.runRenderLoop(() => scene.render())
 
-    // WebXR
+    // WebXR — enter AR BEFORE loading the model so the browser's
+    // user-gesture window (from the "Iniciar AR" tap) is still active.
+    // Loading a large GLB first can exceed the gesture timeout (~5 s),
+    // causing enterXRAsync to be silently rejected → fallback to 3D.
+    setModelReady(false)
     try {
       const xr = await BABYLON.WebXRDefaultExperience.CreateAsync(scene, {
         disableDefaultUI: true,
@@ -283,22 +271,18 @@ export default function ExperiencePage() {
         const moving = isMovingRef.current
 
         if (state === 'ar-scanning' || (state === 'ar-placed' && moving)) {
-          // Extract position only — keep reticle rotation fixed (flat)
           const pos = new BABYLON.Vector3()
           const _r = new BABYLON.Quaternion()
           const _s = new BABYLON.Vector3()
           hitMatrix.decompose(_s, _r, pos)
 
-          // Show & position reticle
           if (reticleRef.current) {
             reticleRef.current.isVisible = true
             reticleRef.current.position = pos
           }
 
-          // Always store latest hit for tap-to-place / tap-to-confirm
           lastHitPoseRef.current = hitMatrix.clone()
 
-          // Live-move model while "Mover" is active
           if (state === 'ar-placed' && moving && modelRef.current) {
             modelRef.current.position = pos.clone()
           }
@@ -330,9 +314,34 @@ export default function ExperiencePage() {
     } catch (err) {
       console.error('WebXR init error:', err)
       initViewerFallback()
+      return
     }
 
-    engine.runRenderLoop(() => scene.render())
+    // Load model in background — AR camera is already rendering.
+    // The user scans for surfaces while the model downloads.
+    try {
+      const { meshes } = await SceneLoader.ImportMeshAsync('', '', experience.assets.glbUrl, scene)
+      if (meshes.length > 0) {
+        const root = meshes[0]
+        root.setEnabled(false)
+        root.position = BABYLON.Vector3.Zero()
+        root.rotationQuaternion = null   // use Euler so rotation slider works
+        root.rotation = BABYLON.Vector3.Zero()
+        modelRef.current = root
+      }
+      setModelReady(true)
+    } catch (err) {
+      console.error('Failed to load 3D model in AR:', err)
+      if (xrRef.current) {
+        try { await xrRef.current.baseExperience.exitXRAsync() } catch {}
+      }
+      cleanup()
+      setError({
+        code: 'LOAD_ERROR',
+        message: `Error al cargar el modelo 3D: ${err instanceof Error ? err.message : String(err)}`,
+      })
+      setAppState('error')
+    }
   }, [experience, cleanup, initViewerFallback])
 
   // ── Place model at last hit position ──────────────────────
@@ -618,14 +627,23 @@ export default function ExperiencePage() {
                 </div>
               </div>
 
+              {/* Model loading indicator */}
+              {!modelReady && (
+                <div className="bg-blue-600/80 backdrop-blur-sm rounded-full px-4 py-2 mb-3 flex items-center gap-2">
+                  <div className="animate-spin rounded-full h-4 w-4 border-2 border-white border-t-transparent" />
+                  <span className="text-white text-sm font-medium">Cargando modelo...</span>
+                </div>
+              )}
+
               {/* Instruction card */}
               <div className="bg-black/75 backdrop-blur-md rounded-2xl px-5 py-5 text-center max-w-xs w-full">
                 <p className="text-white font-semibold text-base mb-2">
                   Busca una superficie plana
                 </p>
                 <p className="text-white/55 text-sm leading-relaxed">
-                  Apunta al piso y mueve el teléfono despacio. Cuando aparezca
-                  el círculo verde, toca la pantalla para colocar el modelo.
+                  {modelReady
+                    ? 'Apunta al piso y mueve el teléfono despacio. Cuando aparezca el círculo verde, toca la pantalla para colocar el modelo.'
+                    : 'Apunta al piso y mueve el teléfono despacio mientras se descarga el modelo.'}
                 </p>
               </div>
             </div>

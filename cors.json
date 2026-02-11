@@ -1,18 +1,9 @@
 [
   {
     "AllowedHeaders": ["*"],
-    "AllowedMethods": ["GET", "PUT", "DELETE"],
-    "AllowedOrigins": [
-      "http://localhost:3000",
-      "https://localhost:3000",
-      "http://192.168.137.1:3000",
-      "https://192.168.137.1:3000",
-      "http://26.129.197.142:3000",
-      "https://26.129.197.142:3000",
-      "http://10.77.86.68:3000",
-      "https://10.77.86.68:3000"
-    ],
-    "ExposeHeaders": ["ETag"],
+    "AllowedMethods": ["GET", "HEAD", "PUT", "DELETE"],
+    "AllowedOrigins": ["*"],
+    "ExposeHeaders": ["ETag", "Content-Type", "Content-Length", "Access-Control-Allow-Origin"],
     "MaxAge": 3600
   }
 ]

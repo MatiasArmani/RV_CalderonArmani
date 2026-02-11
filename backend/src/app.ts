@@ -48,23 +48,18 @@ export function createApp(): Express {
   )
 
   // CORS configuration
-  const allowedOrigins = [
-    config.FRONTEND_URL,
-    'http://localhost:3000',
-    'https://localhost:3000',
-    'http://192.168.137.1:3000',
-    'https://192.168.137.1:3000',
-    "http://26.129.197.142:3000",
-    "https://26.129.197.142:3000",
-    'http://10.77.86.68:3000',
-    'https://10.77.86.68:3000',
-  ]
+  // In development, allow any origin (IP changes with each network)
+  // In production, restrict to FRONTEND_URL
+  const isDev = config.NODE_ENV !== 'production'
 
   app.use(
     cors({
       origin: (origin, callback) => {
         // Allow requests with no origin (like mobile apps or curl requests)
-        if (!origin || allowedOrigins.includes(origin)) {
+        if (!origin) return callback(null, true)
+        if (isDev) return callback(null, true)
+        // Production: only allow the configured frontend URL
+        if (origin === config.FRONTEND_URL) {
           callback(null, true)
         } else {
           callback(new Error(`Not allowed by CORS: ${origin}`))
