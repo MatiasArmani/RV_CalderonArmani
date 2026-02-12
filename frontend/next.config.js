@@ -11,6 +11,7 @@ const nextConfig = {
     'https://192.168.137.1:3000',
     'https://26.129.197.142:3000',
     'https://10.77.86.68:3000',
+    'http://10.0.0.174:3000',
   ],
 
   // Proxy /api/* to the backend so browser calls are same-origin (no CORS)
