@@ -18,6 +18,11 @@ export default function ExperiencePage() {
   const [rotation, setRotation] = useState(0)
   const [isMoving, setIsMoving] = useState(false)
   const [modelReady, setModelReady] = useState(false)
+  const [isStartingAR, setIsStartingAR] = useState(false)
+  const [isSheetMinimized, setIsSheetMinimized] = useState(false)
+
+  // Joystick visual state
+  const [knobPos, setKnobPos] = useState({ x: 0, y: 0 })
 
   // ── Visit tracking ──────────────────────────────────────────
   const [visitId, setVisitId] = useState<string | null>(null)
@@ -32,7 +37,15 @@ export default function ExperiencePage() {
   const modelRef = useRef<import('@babylonjs/core').AbstractMesh | null>(null)
   const reticleRef = useRef<import('@babylonjs/core').Mesh | null>(null)
   const lastHitPoseRef = useRef<import('@babylonjs/core').Matrix | null>(null)
+  const placedPositionRef = useRef<{ x: number; y: number; z: number } | null>(null)
   const overlayRef = useRef<HTMLDivElement>(null)
+
+  // ── Joystick refs ──────────────────────────────────────────
+  const joystickContainerRef = useRef<HTMLDivElement>(null)
+  const joystickDeltaRef = useRef({ x: 0, z: 0 })
+  const joystickActiveRef = useRef(false)
+  const joystickAnimFrameRef = useRef<number | null>(null)
+  const lastJoystickTimeRef = useRef(0)
 
   // ── State refs: lets WebXR/Babylon callbacks read current
   //    React state without stale closures ─────────────────────
@@ -127,6 +140,10 @@ export default function ExperiencePage() {
 
   // ── Cleanup ───────────────────────────────────────────────
   const cleanup = useCallback(() => {
+    if (joystickAnimFrameRef.current) {
+      cancelAnimationFrame(joystickAnimFrameRef.current)
+      joystickAnimFrameRef.current = null
+    }
     sceneRef.current?.dispose()
     engineRef.current?.dispose()
     sceneRef.current = null
@@ -195,6 +212,7 @@ export default function ExperiencePage() {
   // ── AR session ────────────────────────────────────────────
   const startARSession = useCallback(async () => {
     if (!experience || !canvasRef.current) return
+    setIsStartingAR(true)
     const canvas = canvasRef.current
 
     const BABYLON = await import('@babylonjs/core')
@@ -302,6 +320,7 @@ export default function ExperiencePage() {
 
       // Enter AR
       await xr.baseExperience.enterXRAsync('immersive-ar', 'unbounded')
+      setIsStartingAR(false)
       setAppState('ar-scanning')
 
       // Session end (system back / gesture)
@@ -313,6 +332,7 @@ export default function ExperiencePage() {
       })
     } catch (err) {
       console.error('WebXR init error:', err)
+      setIsStartingAR(false)
       initViewerFallback()
       return
     }
@@ -360,11 +380,15 @@ export default function ExperiencePage() {
     model.rotation = BABYLON.Vector3.Zero()
     model.setEnabled(true)
 
+    // Store placed position for joystick offset
+    placedPositionRef.current = { x: pos.x, y: pos.y, z: pos.z }
+
     if (reticleRef.current) reticleRef.current.isVisible = false
 
     setAppState('ar-placed')
     setRotation(0)
     setIsMoving(false)
+    setIsSheetMinimized(false)
   }, [])
 
   // ── Rotation slider ───────────────────────────────────────
@@ -375,22 +399,120 @@ export default function ExperiencePage() {
     }
   }, [])
 
+  // ── Joystick movement loop ────────────────────────────────
+  const joystickLoop = useCallback(() => {
+    if (!joystickActiveRef.current) return
+
+    const now = performance.now()
+    const dt = (now - lastJoystickTimeRef.current) / 1000 // seconds
+    lastJoystickTimeRef.current = now
+
+    const model = modelRef.current
+    const placed = placedPositionRef.current
+    if (model && placed) {
+      const speed = 0.8 // meters per second at full displacement
+      const dx = joystickDeltaRef.current.x * speed * dt
+      const dz = joystickDeltaRef.current.z * speed * dt
+
+      // Update stored position
+      placed.x += dx
+      placed.z += dz
+
+      // Apply to model
+      model.position.x = placed.x
+      model.position.z = placed.z
+    }
+
+    joystickAnimFrameRef.current = requestAnimationFrame(joystickLoop)
+  }, [])
+
+  // ── Joystick touch handlers ───────────────────────────────
+  const JOYSTICK_RADIUS = 52 // outer radius in px
+  const KNOB_RADIUS = 22     // knob radius in px
+  const MAX_TRAVEL = JOYSTICK_RADIUS - KNOB_RADIUS // max knob center offset
+
+  const getJoystickCenter = useCallback(() => {
+    const el = joystickContainerRef.current
+    if (!el) return { cx: 0, cy: 0 }
+    const rect = el.getBoundingClientRect()
+    return { cx: rect.left + rect.width / 2, cy: rect.top + rect.height / 2 }
+  }, [])
+
+  const handleJoystickStart = useCallback((clientX: number, clientY: number) => {
+    joystickActiveRef.current = true
+    lastJoystickTimeRef.current = performance.now()
+
+    const { cx, cy } = getJoystickCenter()
+    let dx = clientX - cx
+    let dy = clientY - cy
+    const dist = Math.sqrt(dx * dx + dy * dy)
+    if (dist > MAX_TRAVEL) {
+      dx = (dx / dist) * MAX_TRAVEL
+      dy = (dy / dist) * MAX_TRAVEL
+    }
+
+    setKnobPos({ x: dx, y: dy })
+    const normalized = dist > 0 ? Math.min(dist / MAX_TRAVEL, 1) : 0
+    joystickDeltaRef.current = {
+      x: dist > 0 ? (dx / MAX_TRAVEL) * normalized : 0,
+      z: dist > 0 ? (dy / MAX_TRAVEL) * normalized : 0,
+    }
+
+    // Start animation loop
+    if (joystickAnimFrameRef.current) cancelAnimationFrame(joystickAnimFrameRef.current)
+    joystickAnimFrameRef.current = requestAnimationFrame(joystickLoop)
+  }, [getJoystickCenter, MAX_TRAVEL, joystickLoop])
+
+  const handleJoystickMove = useCallback((clientX: number, clientY: number) => {
+    if (!joystickActiveRef.current) return
+
+    const { cx, cy } = getJoystickCenter()
+    let dx = clientX - cx
+    let dy = clientY - cy
+    const dist = Math.sqrt(dx * dx + dy * dy)
+    if (dist > MAX_TRAVEL) {
+      dx = (dx / dist) * MAX_TRAVEL
+      dy = (dy / dist) * MAX_TRAVEL
+    }
+
+    setKnobPos({ x: dx, y: dy })
+    const normalized = dist > 0 ? Math.min(dist / MAX_TRAVEL, 1) : 0
+    joystickDeltaRef.current = {
+      x: dist > 0 ? (dx / MAX_TRAVEL) * normalized : 0,
+      z: dist > 0 ? (dy / MAX_TRAVEL) * normalized : 0,
+    }
+  }, [getJoystickCenter, MAX_TRAVEL])
+
+  const handleJoystickEnd = useCallback(() => {
+    joystickActiveRef.current = false
+    joystickDeltaRef.current = { x: 0, z: 0 }
+    setKnobPos({ x: 0, y: 0 })
+    if (joystickAnimFrameRef.current) {
+      cancelAnimationFrame(joystickAnimFrameRef.current)
+      joystickAnimFrameRef.current = null
+    }
+  }, [])
+
   // ── Reset → scanning ──────────────────────────────────────
   const resetPlacement = useCallback(() => {
     if (modelRef.current) modelRef.current.setEnabled(false)
+    placedPositionRef.current = null
     setIsMoving(false)
     setAppState('ar-scanning')
     setRotation(0)
-  }, [])
+    setIsSheetMinimized(false)
+    handleJoystickEnd()
+  }, [handleJoystickEnd])
 
   // ── Exit AR ───────────────────────────────────────────────
   const exitAR = useCallback(async () => {
+    handleJoystickEnd()
     if (xrRef.current) {
       try { await xrRef.current.baseExperience.exitXRAsync() } catch {}
     }
     cleanup()
     setAppState('ready')
-  }, [cleanup])
+  }, [cleanup, handleJoystickEnd])
 
   // ── Tap to place / confirm ────────────────────────────────
   // En immersive-ar + dom-overlay los taps no llegan al canvas.
@@ -539,6 +661,38 @@ export default function ExperiencePage() {
       )}
 
       {/* ══════════════════════════════════════════════════════
+          AR LOADING — fullscreen overlay while initializing AR
+          ══════════════════════════════════════════════════════ */}
+      {isStartingAR && (
+        <div className="absolute inset-0 z-30 flex flex-col items-center justify-center bg-gray-900">
+          <div className="relative mb-8">
+            {/* Outer pulsing ring */}
+            <div className="absolute inset-0 w-24 h-24 rounded-full border-2 border-blue-400/30 animate-ping" />
+            {/* Spinner */}
+            <div className="w-24 h-24 rounded-full border-4 border-gray-700 border-t-blue-500 animate-spin" />
+            {/* Center icon */}
+            <div className="absolute inset-0 flex items-center justify-center">
+              <svg className="w-10 h-10 text-blue-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                <path strokeLinecap="round" strokeLinejoin="round"
+                  d="M6.827 6.175A2.31 2.31 0 015.186 7.23c-.38.054-.757.112-1.134.175C2.999 7.58 2.25 8.507 2.25 9.574V18a2.25 2.25 0 002.25 2.25h15A2.25 2.25 0 0021.75 18V9.574c0-1.067-.75-1.994-1.802-2.169a47.865 47.865 0 00-1.134-.175 2.31 2.31 0 01-1.64-1.055l-.822-1.316a2.192 2.192 0 00-1.736-1.039 48.774 48.774 0 00-5.232 0 2.192 2.192 0 00-1.736 1.039l-.821 1.316z" />
+                <path strokeLinecap="round" strokeLinejoin="round"
+                  d="M16.5 12.75a4.5 4.5 0 11-9 0 4.5 4.5 0 019 0z" />
+              </svg>
+            </div>
+          </div>
+          <h2 className="text-white text-xl font-bold mb-2">Iniciando cámara AR</h2>
+          <p className="text-gray-400 text-sm text-center max-w-xs leading-relaxed">
+            Preparando la experiencia de realidad aumentada...
+          </p>
+          <div className="mt-6 flex items-center gap-2">
+            <div className="w-2 h-2 bg-blue-500 rounded-full animate-bounce" style={{ animationDelay: '0ms' }} />
+            <div className="w-2 h-2 bg-blue-500 rounded-full animate-bounce" style={{ animationDelay: '150ms' }} />
+            <div className="w-2 h-2 bg-blue-500 rounded-full animate-bounce" style={{ animationDelay: '300ms' }} />
+          </div>
+        </div>
+      )}
+
+      {/* ══════════════════════════════════════════════════════
           VIEWER FALLBACK — header/footer over the 3-D canvas
           ══════════════════════════════════════════════════════ */}
       {appState === 'viewer-fallback' && (
@@ -649,15 +803,36 @@ export default function ExperiencePage() {
             </div>
           )}
 
-          {/* ── PLACED (not moving): bottom-sheet controls ── */}
-          {appState === 'ar-placed' && !isMoving && (
+          {/* ── PLACED + MINIMIZED: floating expand button ── */}
+          {appState === 'ar-placed' && !isMoving && isSheetMinimized && (
+            <div className="absolute bottom-6 right-5 pointer-events-auto">
+              <button
+                onClick={() => setIsSheetMinimized(false)}
+                className="w-14 h-14 bg-white/95 backdrop-blur-sm rounded-full shadow-lg flex items-center justify-center active:bg-gray-100 border border-gray-200"
+              >
+                <svg className="w-6 h-6 text-gray-700" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round"
+                    d="M10.5 6h9.75M10.5 6a1.5 1.5 0 11-3 0m3 0a1.5 1.5 0 10-3 0M3.75 6H7.5m3 12h9.75m-9.75 0a1.5 1.5 0 01-3 0m3 0a1.5 1.5 0 00-3 0m-3.75 0H7.5m9-6h3.75m-3.75 0a1.5 1.5 0 01-3 0m3 0a1.5 1.5 0 00-3 0m-9.75 0h9.75" />
+                </svg>
+              </button>
+            </div>
+          )}
+
+          {/* ── PLACED (not moving, not minimized): bottom-sheet controls ── */}
+          {appState === 'ar-placed' && !isMoving && !isSheetMinimized && (
             <div className="absolute bottom-0 left-0 right-0 pointer-events-auto">
               <div className="bg-white/95 backdrop-blur-lg rounded-t-3xl shadow-2xl px-5 pt-3 pb-8">
-                {/* Drag handle */}
-                <div className="w-10 h-1 bg-gray-300 rounded-full mx-auto mb-4" />
+                {/* Drag handle — tap to minimize */}
+                <button
+                  onClick={() => setIsSheetMinimized(true)}
+                  className="w-full flex flex-col items-center py-1 mb-2 group"
+                >
+                  <div className="w-10 h-1 bg-gray-300 rounded-full group-active:bg-gray-400" />
+                  <span className="text-[10px] text-gray-400 mt-1">Toca para minimizar</span>
+                </button>
 
                 {/* Title row */}
-                <div className="flex items-center justify-between mb-5">
+                <div className="flex items-center justify-between mb-4">
                   <h3 className="font-bold text-gray-900 text-base">Modelo colocado</h3>
                   <button
                     onClick={resetPlacement}
@@ -671,32 +846,108 @@ export default function ExperiencePage() {
                   </button>
                 </div>
 
-                {/* Rotation slider */}
-                <div className="mb-5">
-                  <div className="flex justify-between items-center mb-2">
-                    <span className="text-sm font-medium text-gray-600">Rotación</span>
-                    <span className="text-sm font-bold text-gray-900">{rotation}°</span>
+                {/* Controls: rotation slider + joystick side by side */}
+                <div className="flex gap-4 items-start">
+
+                  {/* Left: Rotation slider */}
+                  <div className="flex-1 min-w-0">
+                    <div className="flex justify-between items-center mb-2">
+                      <span className="text-sm font-medium text-gray-600">Rotación</span>
+                      <span className="text-sm font-bold text-gray-900">{rotation}°</span>
+                    </div>
+                    <input
+                      type="range"
+                      min="0"
+                      max="360"
+                      value={rotation}
+                      onChange={(e) => handleRotationChange(parseInt(e.target.value))}
+                      className="w-full h-2.5 bg-gray-200 rounded-full appearance-none cursor-pointer accent-blue-600"
+                    />
+                    <div className="flex justify-between text-[10px] text-gray-400 mt-1">
+                      <span>0°</span><span>90°</span><span>180°</span><span>270°</span><span>360°</span>
+                    </div>
+
+                    {/* Move button */}
+                    <button
+                      onClick={() => setIsMoving(true)}
+                      className="w-full mt-3 py-2.5 bg-blue-600 text-white rounded-xl font-semibold text-sm shadow-md active:bg-blue-700"
+                    >
+                      Mover modelo
+                    </button>
                   </div>
-                  <input
-                    type="range"
-                    min="0"
-                    max="360"
-                    value={rotation}
-                    onChange={(e) => handleRotationChange(parseInt(e.target.value))}
-                    className="w-full h-2.5 bg-gray-200 rounded-full appearance-none cursor-pointer accent-blue-600"
-                  />
-                  <div className="flex justify-between text-xs text-gray-400 mt-1.5">
-                    <span>0°</span><span>90°</span><span>180°</span><span>270°</span><span>360°</span>
+
+                  {/* Right: Joystick */}
+                  <div className="flex flex-col items-center">
+                    <span className="text-sm font-medium text-gray-600 mb-2">Posición</span>
+                    <div
+                      ref={joystickContainerRef}
+                      className="relative rounded-full bg-gray-100 border-2 border-gray-200 select-none"
+                      style={{
+                        width: JOYSTICK_RADIUS * 2,
+                        height: JOYSTICK_RADIUS * 2,
+                        touchAction: 'none',
+                      }}
+                      onTouchStart={(e) => {
+                        e.preventDefault()
+                        const t = e.touches[0]
+                        handleJoystickStart(t.clientX, t.clientY)
+                      }}
+                      onTouchMove={(e) => {
+                        e.preventDefault()
+                        const t = e.touches[0]
+                        handleJoystickMove(t.clientX, t.clientY)
+                      }}
+                      onTouchEnd={(e) => {
+                        e.preventDefault()
+                        handleJoystickEnd()
+                      }}
+                      onMouseDown={(e) => {
+                        e.preventDefault()
+                        handleJoystickStart(e.clientX, e.clientY)
+                        const onMove = (ev: MouseEvent) => handleJoystickMove(ev.clientX, ev.clientY)
+                        const onUp = () => {
+                          handleJoystickEnd()
+                          window.removeEventListener('mousemove', onMove)
+                          window.removeEventListener('mouseup', onUp)
+                        }
+                        window.addEventListener('mousemove', onMove)
+                        window.addEventListener('mouseup', onUp)
+                      }}
+                    >
+                      {/* Crosshair lines */}
+                      <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+                        <div className="absolute w-full h-px bg-gray-200" />
+                        <div className="absolute h-full w-px bg-gray-200" />
+                      </div>
+
+                      {/* Direction arrows */}
+                      <svg className="absolute top-1 left-1/2 -translate-x-1/2 w-3 h-3 text-gray-300 pointer-events-none" fill="currentColor" viewBox="0 0 20 20">
+                        <path fillRule="evenodd" d="M10 3a.75.75 0 01.55.24l3.25 3.5a.75.75 0 11-1.1 1.02L10 4.852 7.3 7.76a.75.75 0 01-1.1-1.02l3.25-3.5A.75.75 0 0110 3z" clipRule="evenodd" />
+                      </svg>
+                      <svg className="absolute bottom-1 left-1/2 -translate-x-1/2 w-3 h-3 text-gray-300 pointer-events-none rotate-180" fill="currentColor" viewBox="0 0 20 20">
+                        <path fillRule="evenodd" d="M10 3a.75.75 0 01.55.24l3.25 3.5a.75.75 0 11-1.1 1.02L10 4.852 7.3 7.76a.75.75 0 01-1.1-1.02l3.25-3.5A.75.75 0 0110 3z" clipRule="evenodd" />
+                      </svg>
+                      <svg className="absolute left-1 top-1/2 -translate-y-1/2 w-3 h-3 text-gray-300 pointer-events-none -rotate-90" fill="currentColor" viewBox="0 0 20 20">
+                        <path fillRule="evenodd" d="M10 3a.75.75 0 01.55.24l3.25 3.5a.75.75 0 11-1.1 1.02L10 4.852 7.3 7.76a.75.75 0 01-1.1-1.02l3.25-3.5A.75.75 0 0110 3z" clipRule="evenodd" />
+                      </svg>
+                      <svg className="absolute right-1 top-1/2 -translate-y-1/2 w-3 h-3 text-gray-300 pointer-events-none rotate-90" fill="currentColor" viewBox="0 0 20 20">
+                        <path fillRule="evenodd" d="M10 3a.75.75 0 01.55.24l3.25 3.5a.75.75 0 11-1.1 1.02L10 4.852 7.3 7.76a.75.75 0 01-1.1-1.02l3.25-3.5A.75.75 0 0110 3z" clipRule="evenodd" />
+                      </svg>
+
+                      {/* Knob */}
+                      <div
+                        className="absolute rounded-full bg-blue-600 shadow-lg border-2 border-white pointer-events-none"
+                        style={{
+                          width: KNOB_RADIUS * 2,
+                          height: KNOB_RADIUS * 2,
+                          left: `calc(50% - ${KNOB_RADIUS}px + ${knobPos.x}px)`,
+                          top: `calc(50% - ${KNOB_RADIUS}px + ${knobPos.y}px)`,
+                          transition: joystickActiveRef.current ? 'none' : 'all 0.2s ease-out',
+                        }}
+                      />
+                    </div>
                   </div>
                 </div>
-
-                {/* Move button */}
-                <button
-                  onClick={() => setIsMoving(true)}
-                  className="w-full py-3.5 bg-blue-600 text-white rounded-2xl font-semibold text-base shadow-md active:bg-blue-700"
-                >
-                  Mover modelo
-                </button>
               </div>
             </div>
           )}
