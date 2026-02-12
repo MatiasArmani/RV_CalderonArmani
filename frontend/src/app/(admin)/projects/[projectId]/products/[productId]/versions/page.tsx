@@ -201,8 +201,8 @@ export default function VersionsPage() {
       return
     }
 
-    if (file.size > 104857600) {
-      setUploadError('El archivo es demasiado grande (máx. 100MB)')
+    if (file.size > 524288000) {
+      setUploadError('El archivo es demasiado grande (máx. 500MB)')
       setUploadingVersionId(null)
       uploadingVersionIdRef.current = null
       return

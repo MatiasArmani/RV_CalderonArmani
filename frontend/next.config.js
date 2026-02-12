@@ -5,6 +5,7 @@ const nextConfig = {
   // Allow Next.js dev server to serve /_next/* assets to LAN IPs
   // Only applies in dev mode; add new IPs here when switching networks
   allowedDevOrigins: [
+    'https://192.168.54.218:3000',
     'https://10.64.196.68:3000',
     'https://192.168.100.153:3000',
     'https://192.168.137.1:3000',

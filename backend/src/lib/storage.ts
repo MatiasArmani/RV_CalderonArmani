@@ -69,7 +69,7 @@ export async function getPresignedUploadUrl(
   })
 
   const url = await getSignedUrl(client, command, {
-    expiresIn: 900, // 15 minutes
+    expiresIn: 1800, // 30 minutes (large files up to 500MB)
   })
 
   return {
@@ -180,6 +180,40 @@ export async function uploadObject(
   })
 
   await client.send(command)
+}
+
+/**
+ * Download a byte range from an S3 object
+ * Uses HTTP Range header for efficient partial reads (e.g. GLB header validation)
+ */
+export async function downloadObjectRange(
+  storageKey: string,
+  start: number,
+  end: number
+): Promise<Buffer> {
+  const config = getConfig()
+  const client = getS3Client()
+
+  const command = new GetObjectCommand({
+    Bucket: config.AWS_S3_BUCKET,
+    Key: storageKey,
+    Range: `bytes=${start}-${end}`,
+  })
+
+  const response = await client.send(command)
+
+  if (!response.Body) {
+    throw new Error('Empty response body from S3 range request')
+  }
+
+  const chunks: Uint8Array[] = []
+  const stream = response.Body as AsyncIterable<Uint8Array>
+
+  for await (const chunk of stream) {
+    chunks.push(chunk)
+  }
+
+  return Buffer.concat(chunks)
 }
 
 /**

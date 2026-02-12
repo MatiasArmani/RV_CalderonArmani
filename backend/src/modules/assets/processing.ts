@@ -22,7 +22,7 @@ export interface GlbValidationResult {
  * - version: 4 bytes (uint32, little-endian)
  * - length: 4 bytes (uint32, little-endian, total file length)
  */
-export function validateGlbFormat(buffer: Buffer): GlbValidationResult {
+export function validateGlbFormat(buffer: Buffer, actualFileSize?: number): GlbValidationResult {
   // Minimum GLB size: 12 bytes header + at least some content
   if (buffer.length < 12) {
     return {
@@ -53,13 +53,15 @@ export function validateGlbFormat(buffer: Buffer): GlbValidationResult {
   const totalLength = buffer.readUInt32LE(8)
 
   // Verify length matches (with some tolerance for potential padding)
-  const lengthDiff = Math.abs(buffer.length - totalLength)
-  const tolerance = Math.max(buffer.length * 0.05, 100) // 5% or 100 bytes
+  // Use actualFileSize if provided (range-request scenarios), otherwise buffer.length
+  const fileSize = actualFileSize ?? buffer.length
+  const lengthDiff = Math.abs(fileSize - totalLength)
+  const tolerance = Math.max(fileSize * 0.05, 100) // 5% or 100 bytes
 
   if (lengthDiff > tolerance) {
     return {
       valid: false,
-      error: `GLB file size mismatch: header says ${totalLength} bytes, actual is ${buffer.length} bytes`,
+      error: `GLB file size mismatch: header says ${totalLength} bytes, actual is ${fileSize} bytes`,
     }
   }
 
@@ -170,6 +172,6 @@ export async function generatePlaceholderThumbnail(): Promise<Buffer> {
  * Constants for validation
  */
 export const ALLOWED_CONTENT_TYPE = 'model/gltf-binary'
-export const MAX_FILE_SIZE_BYTES = 104857600 // 100MB
+export const MAX_FILE_SIZE_BYTES = 524288000 // 500MB
 export const LARGE_FILE_THRESHOLD = 52428800 // 50MB
-export const PROCESSING_TIMEOUT_MS = 120000 // 2 minutes
+export const PROCESSING_TIMEOUT_MS = 300000 // 5 minutes

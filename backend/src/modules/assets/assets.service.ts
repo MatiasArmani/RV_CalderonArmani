@@ -14,7 +14,7 @@ import {
   getPresignedUploadUrl,
   getPresignedDownloadUrl,
   getObjectMetadata,
-  downloadObject,
+  downloadObjectRange,
   uploadObject,
 } from '../../lib/storage'
 import {
@@ -137,7 +137,7 @@ export async function requestUploadUrl(
   // Validate file size
   if (sizeBytes > MAX_FILE_SIZE_BYTES) {
     throw Errors.validation(
-      [{ field: 'sizeBytes', message: 'File too large. Maximum is 100MB' }]
+      [{ field: 'sizeBytes', message: 'File too large. Maximum is 500MB' }]
     )
   }
 
@@ -242,11 +242,11 @@ async function processAsset(
   await assetsRepo.updateStatus(assetId, 'PROCESSING')
 
   try {
-    // Download file for validation
-    const fileBuffer = await downloadObject(asset.storageKey)
+    // Download only the GLB header (12 bytes) via S3 range request
+    const headerBuffer = await downloadObjectRange(asset.storageKey, 0, 11)
 
-    // Validate GLB format
-    const glbValidation = validateGlbFormat(fileBuffer)
+    // Validate GLB format using header bytes and the known file size
+    const glbValidation = validateGlbFormat(headerBuffer, asset.sizeBytes)
     if (!glbValidation.valid) {
       await assetsRepo.updateStatus(assetId, 'FAILED', {
         errorMessage: glbValidation.error,

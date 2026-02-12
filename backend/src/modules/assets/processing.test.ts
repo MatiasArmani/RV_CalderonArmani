@@ -72,6 +72,31 @@ describe('GLB Processing Utilities', () => {
 
       expect(result.valid).toBe(true)
     })
+
+    it('should validate using actualFileSize when provided (range request)', () => {
+      const buffer = Buffer.alloc(12)
+      buffer.write('glTF', 0)
+      buffer.writeUInt32LE(2, 4)
+      buffer.writeUInt32LE(50000000, 8) // totalLength = 50MB
+
+      const result = validateGlbFormat(buffer, 50000000)
+
+      expect(result.valid).toBe(true)
+      expect(result.version).toBe(2)
+      expect(result.totalLength).toBe(50000000)
+    })
+
+    it('should reject when actualFileSize does not match GLB totalLength', () => {
+      const buffer = Buffer.alloc(12)
+      buffer.write('glTF', 0)
+      buffer.writeUInt32LE(2, 4)
+      buffer.writeUInt32LE(50000000, 8)
+
+      const result = validateGlbFormat(buffer, 100000000) // 2x declared size
+
+      expect(result.valid).toBe(false)
+      expect(result.error).toContain('size mismatch')
+    })
   })
 
   describe('validateFileSize', () => {

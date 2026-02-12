@@ -35,7 +35,7 @@ jest.mock('../../lib/storage', () => ({
   getPresignedUploadUrl: jest.fn(),
   getPresignedDownloadUrl: jest.fn(),
   getObjectMetadata: jest.fn(),
-  downloadObject: jest.fn(),
+  downloadObjectRange: jest.fn(),
   uploadObject: jest.fn(),
 }))
 
@@ -248,7 +248,7 @@ describe('Assets Endpoints', () => {
       expect(response.body.error.code).toBe('VALIDATION_ERROR')
     })
 
-    it('should reject file size over 100MB', async () => {
+    it('should reject file size over 500MB', async () => {
       const response = await request(app)
         .post('/api/assets/upload-url')
         .set('Authorization', `Bearer ${validToken}`)
@@ -256,7 +256,7 @@ describe('Assets Endpoints', () => {
           versionId,
           filename: 'huge.glb',
           contentType: 'model/gltf-binary',
-          sizeBytes: 200000000, // 200MB
+          sizeBytes: 600000000, // 600MB
         })
         .expect(400)
 
@@ -315,11 +315,11 @@ describe('Assets Endpoints', () => {
         status: 'PENDING_UPLOAD',
       }
 
-      // Valid GLB header (magic bytes "glTF" + version 2 + length)
-      const glbBuffer = Buffer.alloc(1000)
-      glbBuffer.write('glTF', 0)
-      glbBuffer.writeUInt32LE(2, 4) // version 2
-      glbBuffer.writeUInt32LE(1000, 8) // total length
+      // Valid GLB header (magic bytes "glTF" + version 2 + length matching sizeBytes)
+      const glbHeader = Buffer.alloc(12)
+      glbHeader.write('glTF', 0)
+      glbHeader.writeUInt32LE(2, 4) // version 2
+      glbHeader.writeUInt32LE(1024000, 8) // total length matches mockAsset.sizeBytes
 
       ;(prisma.asset.findUnique as jest.Mock)
         .mockResolvedValueOnce(pendingAsset) // First call for validation
@@ -342,7 +342,7 @@ describe('Assets Endpoints', () => {
         exists: true,
         sizeBytes: 1024000,
       })
-      ;(storage.downloadObject as jest.Mock).mockResolvedValue(glbBuffer)
+      ;(storage.downloadObjectRange as jest.Mock).mockResolvedValue(glbHeader)
       ;(storage.uploadObject as jest.Mock).mockResolvedValue(undefined)
 
       const response = await request(app)
