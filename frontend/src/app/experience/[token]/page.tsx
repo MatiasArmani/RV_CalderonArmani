@@ -455,7 +455,7 @@ export default function ExperiencePage() {
     const normalized = dist > 0 ? Math.min(dist / MAX_TRAVEL, 1) : 0
     joystickDeltaRef.current = {
       x: dist > 0 ? (dx / MAX_TRAVEL) * normalized : 0,
-      z: dist > 0 ? (dy / MAX_TRAVEL) * normalized : 0,
+      z: dist > 0 ? (-dy / MAX_TRAVEL) * normalized : 0,
     }
 
     // Start animation loop
@@ -479,7 +479,7 @@ export default function ExperiencePage() {
     const normalized = dist > 0 ? Math.min(dist / MAX_TRAVEL, 1) : 0
     joystickDeltaRef.current = {
       x: dist > 0 ? (dx / MAX_TRAVEL) * normalized : 0,
-      z: dist > 0 ? (dy / MAX_TRAVEL) * normalized : 0,
+      z: dist > 0 ? (-dy / MAX_TRAVEL) * normalized : 0,
     }
   }, [getJoystickCenter, MAX_TRAVEL])
 
