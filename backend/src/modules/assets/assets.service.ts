@@ -17,6 +17,7 @@ import {
   downloadObjectRange,
   uploadObject,
 } from '../../lib/storage'
+import * as submodelsRepo from '../submodels/submodels.repository'
 import {
   validateGlbFormat,
   validateFileSize,
@@ -28,6 +29,7 @@ import {
 export interface AssetDTO {
   id: string
   versionId: string
+  submodelId: string | null
   kind: AssetKind
   status: AssetStatus
   contentType: string
@@ -71,6 +73,7 @@ const VALID_TRANSITIONS: Record<AssetStatus, AssetStatus[]> = {
 function toDTO(asset: {
   id: string
   versionId: string
+  submodelId: string | null
   kind: AssetKind
   status: AssetStatus
   storageKey: string
@@ -84,6 +87,7 @@ function toDTO(asset: {
   return {
     id: asset.id,
     versionId: asset.versionId,
+    submodelId: asset.submodelId,
     kind: asset.kind,
     status: asset.status,
     contentType: asset.contentType,
@@ -122,7 +126,8 @@ export async function requestUploadUrl(
   versionId: string,
   filename: string,
   contentType: string,
-  sizeBytes: number
+  sizeBytes: number,
+  submodelId?: string | null
 ): Promise<UploadUrlResponse> {
   // Validate version access
   await validateVersionAccess(versionId, companyId)
@@ -141,20 +146,30 @@ export async function requestUploadUrl(
     )
   }
 
-  // Check if version already has a SOURCE_GLB asset
-  const existingAsset = await assetsRepo.findSourceGlbByVersion(versionId)
+  // If submodelId provided, validate it belongs to this version and tenant
+  if (submodelId) {
+    const submodel = await submodelsRepo.findById(submodelId)
+    if (!submodel || submodel.companyId !== companyId || submodel.versionId !== versionId) {
+      throw Errors.notFound('Submodel')
+    }
+  }
+
+  // Check if already has a SOURCE_GLB (filtered by submodelId)
+  const existingAsset = await assetsRepo.findSourceGlbByVersion(versionId, submodelId)
   if (existingAsset && existingAsset.status !== 'FAILED') {
     throw Errors.conflict('Esta versión ya tiene un modelo 3D. Elimínelo primero para subir uno nuevo.')
   }
 
   // Sanitize filename for S3 key (keep alphanumeric, hyphens, underscores, dots)
   const safeFilename = filename.replace(/[^a-zA-Z0-9\-_.]/g, '_')
-  const storageKey = buildStorageKey(companyId, versionId, 'source', safeFilename)
+  const submodelPrefix = submodelId ? `sub_${submodelId}/` : ''
+  const storageKey = buildStorageKey(companyId, versionId, 'source', `${submodelPrefix}${safeFilename}`)
 
   // Create asset record
   const asset = await assetsRepo.create({
     companyId,
     versionId,
+    submodelId: submodelId ?? null,
     kind: 'SOURCE_GLB',
     storageKey,
     contentType,
@@ -257,12 +272,13 @@ async function processAsset(
     // Generate placeholder thumbnail
     const thumbnailBuffer = await generatePlaceholderThumbnail()
 
-    // Build thumbnail storage key
+    // Build thumbnail storage key (include submodel prefix to avoid collision)
+    const thumbSubPrefix = asset.submodelId ? `sub_${asset.submodelId}/` : ''
     const thumbStorageKey = buildStorageKey(
       companyId,
       asset.versionId,
       'thumb',
-      'thumbnail.jpg'
+      `${thumbSubPrefix}thumbnail.jpg`
     )
 
     // Upload thumbnail
@@ -272,6 +288,7 @@ async function processAsset(
     await assetsRepo.create({
       companyId,
       versionId: asset.versionId,
+      submodelId: asset.submodelId,
       kind: 'THUMB',
       storageKey: thumbStorageKey,
       contentType: 'image/jpeg',

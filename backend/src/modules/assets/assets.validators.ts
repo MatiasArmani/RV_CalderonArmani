@@ -34,6 +34,11 @@ export const requestUploadUrlValidators = [
       return Number.isInteger(num) && num >= 1 && num <= MAX_FILE_SIZE_BYTES
     })
     .withMessage(`File size must be between 1 byte and ${MAX_FILE_SIZE_BYTES} bytes (100MB)`),
+
+  body('submodelId')
+    .optional({ nullable: true })
+    .isUUID()
+    .withMessage('Invalid submodel ID'),
 ]
 
 export const completeUploadValidators = [

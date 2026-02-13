@@ -11,6 +11,7 @@ export type AssetStatus = 'PENDING_UPLOAD' | 'UPLOADED' | 'PROCESSING' | 'READY'
 export interface Asset {
   id: string
   versionId: string
+  submodelId: string | null
   kind: AssetKind
   status: AssetStatus
   contentType: string
@@ -33,6 +34,7 @@ export interface UploadUrlRequest {
   filename: string
   contentType: 'model/gltf-binary'
   sizeBytes: number
+  submodelId?: string | null
 }
 
 export interface UploadUrlResponse {
@@ -117,7 +119,8 @@ export const assetsApi = {
   uploadGlb: async (
     versionId: string,
     file: File,
-    onProgress?: (progress: number) => void
+    onProgress?: (progress: number) => void,
+    submodelId?: string | null
   ): Promise<Asset> => {
     // Validate file type
     if (!file.name.toLowerCase().endsWith('.glb')) {
@@ -130,6 +133,7 @@ export const assetsApi = {
       filename: file.name,
       contentType: 'model/gltf-binary',
       sizeBytes: file.size,
+      submodelId: submodelId ?? undefined,
     })
 
     // Upload to S3

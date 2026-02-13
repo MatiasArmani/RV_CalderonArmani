@@ -8,6 +8,16 @@ import * as sharesRepo from '../shares/shares.repository'
 import { validateShareAccess } from '../shares/shares.service'
 import { getPresignedDownloadUrl } from '../../lib/storage'
 
+export interface PublicSubmodelDTO {
+  id: string
+  name: string
+  sortOrder: number
+  assets: {
+    glbUrl: string
+    thumbUrl: string | null
+  }
+}
+
 export interface PublicExperienceDTO {
   product: {
     name: string
@@ -18,6 +28,7 @@ export interface PublicExperienceDTO {
     thumbUrl: string | null
     usdzUrl: string | null
   }
+  submodels: PublicSubmodelDTO[]
   share: {
     expiresAt: string
     remainingVisits: number | null
@@ -39,23 +50,23 @@ export async function getExperience(token: string): Promise<PublicExperienceDTO>
   // Validate share is still valid (not expired, revoked, or limit reached)
   validateShareAccess(share)
 
-  // Find the READY SOURCE_GLB asset
+  // Find the READY base SOURCE_GLB asset (no submodelId)
   const sourceGlb = share.version.assets.find(
-    (a) => a.kind === 'SOURCE_GLB' && a.status === 'READY'
+    (a) => a.kind === 'SOURCE_GLB' && a.status === 'READY' && !a.submodelId
   )
 
   if (!sourceGlb) {
     throw Errors.notFound('Asset', 'No hay modelo 3D disponible para esta versión')
   }
 
-  // Find the thumbnail asset
+  // Find the base thumbnail asset (no submodelId)
   const thumbAsset = share.version.assets.find(
-    (a) => a.kind === 'THUMB' && a.status === 'READY'
+    (a) => a.kind === 'THUMB' && a.status === 'READY' && !a.submodelId
   )
 
   // Find the USDZ asset (for iOS AR)
   const usdzAsset = share.version.assets.find(
-    (a) => a.kind === 'USDZ' && a.status === 'READY'
+    (a) => a.kind === 'USDZ' && a.status === 'READY' && !a.submodelId
   )
 
   // Generate presigned URLs (1 hour TTL)
@@ -66,6 +77,31 @@ export async function getExperience(token: string): Promise<PublicExperienceDTO>
   const usdzUrl = usdzAsset
     ? await getPresignedDownloadUrl(usdzAsset.storageKey, 3600)
     : null
+
+  // Build submodels with their assets
+  const submodels: PublicSubmodelDTO[] = []
+  for (const submodel of share.version.submodels) {
+    const subGlb = share.version.assets.find(
+      (a) => a.kind === 'SOURCE_GLB' && a.status === 'READY' && a.submodelId === submodel.id
+    )
+    // Only include submodels that have a READY GLB
+    if (subGlb) {
+      const subThumb = share.version.assets.find(
+        (a) => a.kind === 'THUMB' && a.status === 'READY' && a.submodelId === submodel.id
+      )
+      submodels.push({
+        id: submodel.id,
+        name: submodel.name,
+        sortOrder: submodel.sortOrder,
+        assets: {
+          glbUrl: await getPresignedDownloadUrl(subGlb.storageKey, 3600),
+          thumbUrl: subThumb
+            ? await getPresignedDownloadUrl(subThumb.storageKey, 3600)
+            : null,
+        },
+      })
+    }
+  }
 
   // Calculate remaining visits
   const remainingVisits = share.maxVisits !== null
@@ -82,6 +118,7 @@ export async function getExperience(token: string): Promise<PublicExperienceDTO>
       thumbUrl,
       usdzUrl,
     },
+    submodels,
     share: {
       expiresAt: share.expiresAt.toISOString(),
       remainingVisits,

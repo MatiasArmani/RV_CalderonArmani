@@ -54,6 +54,7 @@ model Company {
   projects        Project[]
   products        Product[]
   versions        Version[]
+  submodels       Submodel[]
   assets          Asset[]
   shares          Share[]
   visits          Visit[]
@@ -152,14 +153,38 @@ model Version {
   updatedAt DateTime @updatedAt
 
   // Relations
-  company Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
-  product Product @relation(fields: [productId], references: [id], onDelete: Cascade)
-  assets  Asset[]
-  shares  Share[]
+  company   Company    @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  product   Product    @relation(fields: [productId], references: [id], onDelete: Cascade)
+  assets    Asset[]
+  shares    Share[]
+  submodels Submodel[]
 
   @@index([companyId])
   @@index([productId])
   @@map("versions")
+}
+
+// =============================================================================
+// SUBMODELS (Variants)
+// =============================================================================
+
+model Submodel {
+  id        String   @id @default(uuid())
+  companyId String
+  versionId String
+  name      String // e.g., "Rojo", "Azul", "Config A"
+  sortOrder Int      @default(0)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relations
+  company Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  version Version @relation(fields: [versionId], references: [id], onDelete: Cascade)
+  assets  Asset[]
+
+  @@index([companyId])
+  @@index([versionId])
+  @@map("submodels")
 }
 
 // =============================================================================
@@ -170,6 +195,7 @@ model Asset {
   id           String      @id @default(uuid())
   companyId    String
   versionId    String
+  submodelId   String? // null = base model, non-null = variant asset
   kind         AssetKind
   status       AssetStatus @default(PENDING_UPLOAD)
   storageKey   String // S3 path - NEVER expose to client
@@ -181,11 +207,13 @@ model Asset {
   updatedAt    DateTime    @updatedAt
 
   // Relations
-  company Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
-  version Version @relation(fields: [versionId], references: [id], onDelete: Cascade)
+  company  Company   @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  version  Version   @relation(fields: [versionId], references: [id], onDelete: Cascade)
+  submodel Submodel? @relation(fields: [submodelId], references: [id], onDelete: SetNull)
 
   @@index([companyId])
   @@index([versionId])
+  @@index([submodelId])
   @@index([status])
   @@map("assets")
 }

@@ -9,11 +9,13 @@ import {
   versionsApi,
   assetsApi,
   sharesApi,
+  submodelsApi,
   Project,
   Product,
   Version,
   Asset,
   Share,
+  Submodel,
   ApiClientError,
 } from '@/lib/api'
 
@@ -62,6 +64,23 @@ export default function VersionsPage() {
   const [shareError, setShareError] = useState<string | null>(null)
   const [isCreatingShare, setIsCreatingShare] = useState(false)
   const [copied, setCopied] = useState(false)
+
+  // Submodels modal state
+  const [isSubmodelsModalOpen, setIsSubmodelsModalOpen] = useState(false)
+  const [submodelsVersionId, setSubmodelsVersionId] = useState<string | null>(null)
+  const [submodels, setSubmodels] = useState<(Submodel & { assets: Asset[] })[]>([])
+  const [isLoadingSubmodels, setIsLoadingSubmodels] = useState(false)
+  const [submodelFormData, setSubmodelFormData] = useState({ name: '', sortOrder: '0' })
+  const [editingSubmodel, setEditingSubmodel] = useState<Submodel | null>(null)
+  const [isSubmodelFormOpen, setIsSubmodelFormOpen] = useState(false)
+  const [submodelError, setSubmodelError] = useState<string | null>(null)
+  const [isSubmittingSubmodel, setIsSubmittingSubmodel] = useState(false)
+  const [deletingSubmodelId, setDeletingSubmodelId] = useState<string | null>(null)
+  const [uploadingSubmodelId, setUploadingSubmodelId] = useState<string | null>(null)
+  const uploadingSubmodelIdRef = useRef<string | null>(null)
+  const [subUploadProgress, setSubUploadProgress] = useState(0)
+  const [subUploadError, setSubUploadError] = useState<string | null>(null)
+  const subFileInputRef = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
     loadData()
@@ -235,7 +254,8 @@ export default function VersionsPage() {
   }
 
   function getAssetStatus(version: VersionWithAssets) {
-    const sourceAsset = version.assets.find((a) => a.kind === 'SOURCE_GLB')
+    // Only check base model assets (no submodelId)
+    const sourceAsset = version.assets.find((a) => a.kind === 'SOURCE_GLB' && !a.submodelId)
     if (!sourceAsset) return null
     return sourceAsset
   }
@@ -346,6 +366,172 @@ export default function VersionsPage() {
     }
     setCopied(true)
     setTimeout(() => setCopied(false), 1500)
+  }
+
+  // Submodels management functions
+  async function openSubmodelsModal(versionId: string) {
+    setSubmodelsVersionId(versionId)
+    setIsSubmodelsModalOpen(true)
+    setSubmodelError(null)
+    setSubUploadError(null)
+    setIsSubmodelFormOpen(false)
+    setEditingSubmodel(null)
+    await loadSubmodels(versionId)
+  }
+
+  async function loadSubmodels(versionId: string) {
+    try {
+      setIsLoadingSubmodels(true)
+      const submodelsData = await submodelsApi.list(versionId)
+      // Load assets for each submodel
+      const allAssets = await assetsApi.list(versionId)
+      const submodelsWithAssets = submodelsData.map((sub) => ({
+        ...sub,
+        assets: allAssets.filter((a) => a.submodelId === sub.id),
+      }))
+      setSubmodels(submodelsWithAssets)
+    } catch (err) {
+      if (err instanceof ApiClientError) {
+        setSubmodelError(err.message)
+      }
+    } finally {
+      setIsLoadingSubmodels(false)
+    }
+  }
+
+  function closeSubmodelsModal() {
+    setIsSubmodelsModalOpen(false)
+    setSubmodelsVersionId(null)
+    setSubmodels([])
+    setSubmodelError(null)
+    setSubUploadError(null)
+    setIsSubmodelFormOpen(false)
+    setEditingSubmodel(null)
+  }
+
+  function openSubmodelCreate() {
+    setEditingSubmodel(null)
+    setSubmodelFormData({ name: '', sortOrder: '0' })
+    setSubmodelError(null)
+    setIsSubmodelFormOpen(true)
+  }
+
+  function openSubmodelEdit(sub: Submodel) {
+    setEditingSubmodel(sub)
+    setSubmodelFormData({ name: sub.name, sortOrder: String(sub.sortOrder) })
+    setSubmodelError(null)
+    setIsSubmodelFormOpen(true)
+  }
+
+  async function handleSubmodelSubmit(e: React.FormEvent) {
+    e.preventDefault()
+    if (!submodelsVersionId) return
+    setIsSubmittingSubmodel(true)
+    setSubmodelError(null)
+
+    try {
+      if (editingSubmodel) {
+        await submodelsApi.update(editingSubmodel.id, {
+          name: submodelFormData.name,
+          sortOrder: parseInt(submodelFormData.sortOrder) || 0,
+        })
+      } else {
+        await submodelsApi.create({
+          versionId: submodelsVersionId,
+          name: submodelFormData.name,
+          sortOrder: parseInt(submodelFormData.sortOrder) || 0,
+        })
+      }
+      setIsSubmodelFormOpen(false)
+      setEditingSubmodel(null)
+      await loadSubmodels(submodelsVersionId)
+    } catch (err) {
+      if (err instanceof ApiClientError) {
+        setSubmodelError(err.message)
+      } else {
+        setSubmodelError('Error al guardar submodelo')
+      }
+    } finally {
+      setIsSubmittingSubmodel(false)
+    }
+  }
+
+  async function handleDeleteSubmodel(id: string) {
+    if (!submodelsVersionId) return
+    try {
+      await submodelsApi.delete(id)
+      setDeletingSubmodelId(null)
+      await loadSubmodels(submodelsVersionId)
+    } catch (err) {
+      if (err instanceof ApiClientError) {
+        setSubmodelError(err.message)
+      }
+    }
+  }
+
+  function triggerSubmodelFileInput(submodelId: string) {
+    uploadingSubmodelIdRef.current = submodelId
+    setUploadingSubmodelId(submodelId)
+    setSubUploadError(null)
+    subFileInputRef.current?.click()
+  }
+
+  async function handleSubmodelFileChange(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0]
+    const submodelId = uploadingSubmodelIdRef.current
+    if (!file || !submodelId || !submodelsVersionId) return
+
+    e.target.value = ''
+
+    if (!file.name.toLowerCase().endsWith('.glb')) {
+      setSubUploadError('Solo se permiten archivos .glb')
+      setUploadingSubmodelId(null)
+      uploadingSubmodelIdRef.current = null
+      return
+    }
+
+    if (file.size === 0) {
+      setSubUploadError('El archivo esta vacio')
+      setUploadingSubmodelId(null)
+      uploadingSubmodelIdRef.current = null
+      return
+    }
+
+    if (file.size > 524288000) {
+      setSubUploadError('El archivo es demasiado grande (max. 500MB)')
+      setUploadingSubmodelId(null)
+      uploadingSubmodelIdRef.current = null
+      return
+    }
+
+    setSubUploadProgress(0)
+
+    try {
+      await assetsApi.uploadGlb(submodelsVersionId, file, (progress) => {
+        setSubUploadProgress(progress)
+      }, submodelId)
+      setUploadingSubmodelId(null)
+      uploadingSubmodelIdRef.current = null
+      setSubUploadProgress(0)
+      await loadSubmodels(submodelsVersionId)
+      loadData() // refresh main table too
+    } catch (err) {
+      if (err instanceof ApiClientError) {
+        const detail = err.details?.[0]?.message
+        setSubUploadError(detail ?? err.message)
+      } else if (err instanceof Error) {
+        setSubUploadError(err.message)
+      } else {
+        setSubUploadError('Error al subir el archivo')
+      }
+      setUploadingSubmodelId(null)
+      uploadingSubmodelIdRef.current = null
+      setSubUploadProgress(0)
+    }
+  }
+
+  function getSubmodelAssetStatus(sub: Submodel & { assets: Asset[] }) {
+    return sub.assets.find((a) => a.kind === 'SOURCE_GLB') || null
   }
 
   function canShare(version: VersionWithAssets) {
@@ -522,6 +708,9 @@ export default function VersionsPage() {
                   Compartir
                 </th>
                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  Variantes
+                </th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                   Creado
                 </th>
                 <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">
@@ -556,6 +745,14 @@ export default function VersionsPage() {
                     ) : (
                       <span className="text-sm text-gray-400">-</span>
                     )}
+                  </td>
+                  <td className="px-6 py-4 whitespace-nowrap">
+                    <button
+                      onClick={() => openSubmodelsModal(version.id)}
+                      className="text-sm text-primary-600 hover:text-primary-700 font-medium"
+                    >
+                      Variantes
+                    </button>
                   </td>
                   <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
                     {new Date(version.createdAt).toLocaleDateString('es-AR')}
@@ -684,6 +881,15 @@ export default function VersionsPage() {
           </div>
         </div>
       )}
+
+      {/* Hidden file input for submodel uploads */}
+      <input
+        ref={subFileInputRef}
+        type="file"
+        accept=".glb"
+        onChange={handleSubmodelFileChange}
+        className="hidden"
+      />
 
       {/* Share Modal */}
       {isShareModalOpen && (
@@ -838,6 +1044,226 @@ export default function VersionsPage() {
                 <button
                   type="button"
                   onClick={closeShareModal}
+                  className="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500"
+                >
+                  Cerrar
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Submodels Modal */}
+      {isSubmodelsModalOpen && (
+        <div className="fixed inset-0 z-50 overflow-y-auto">
+          <div className="flex min-h-screen items-center justify-center p-4">
+            <div
+              className="fixed inset-0 bg-gray-500 bg-opacity-75 transition-opacity"
+              onClick={closeSubmodelsModal}
+            />
+            <div className="relative bg-white rounded-lg shadow-xl max-w-2xl w-full p-6 max-h-[80vh] overflow-y-auto">
+              <h2 className="text-lg font-medium text-gray-900 mb-4">
+                Variantes / Submodelos
+              </h2>
+
+              {submodelError && (
+                <div className="mb-4 rounded-md bg-red-50 p-4">
+                  <p className="text-sm text-red-700">{submodelError}</p>
+                </div>
+              )}
+
+              {subUploadError && (
+                <div className="mb-4 rounded-md bg-red-50 p-4 flex justify-between items-center">
+                  <p className="text-sm text-red-700">{subUploadError}</p>
+                  <button
+                    onClick={() => setSubUploadError(null)}
+                    className="text-red-700 hover:text-red-900"
+                  >
+                    x
+                  </button>
+                </div>
+              )}
+
+              {/* Create/Edit form */}
+              {isSubmodelFormOpen ? (
+                <form onSubmit={handleSubmodelSubmit} className="mb-6 p-4 bg-gray-50 rounded-lg">
+                  <h3 className="text-sm font-medium text-gray-700 mb-3">
+                    {editingSubmodel ? 'Editar variante' : 'Nueva variante'}
+                  </h3>
+                  <div className="grid grid-cols-2 gap-4 mb-4">
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">
+                        Nombre
+                      </label>
+                      <input
+                        type="text"
+                        required
+                        placeholder="ej: Rojo, Azul, Config A"
+                        value={submodelFormData.name}
+                        onChange={(e) =>
+                          setSubmodelFormData((prev) => ({ ...prev, name: e.target.value }))
+                        }
+                        className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-primary-500 focus:outline-none focus:ring-primary-500"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">
+                        Orden
+                      </label>
+                      <input
+                        type="number"
+                        min="0"
+                        value={submodelFormData.sortOrder}
+                        onChange={(e) =>
+                          setSubmodelFormData((prev) => ({ ...prev, sortOrder: e.target.value }))
+                        }
+                        className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-primary-500 focus:outline-none focus:ring-primary-500"
+                      />
+                    </div>
+                  </div>
+                  <div className="flex gap-2">
+                    <button
+                      type="submit"
+                      disabled={isSubmittingSubmodel}
+                      className="px-4 py-2 text-sm font-medium text-white bg-primary-600 rounded-md hover:bg-primary-700 disabled:opacity-50"
+                    >
+                      {isSubmittingSubmodel ? 'Guardando...' : editingSubmodel ? 'Guardar' : 'Crear'}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setIsSubmodelFormOpen(false)
+                        setEditingSubmodel(null)
+                      }}
+                      className="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50"
+                    >
+                      Cancelar
+                    </button>
+                  </div>
+                </form>
+              ) : (
+                <button
+                  onClick={openSubmodelCreate}
+                  className="mb-4 px-4 py-2 text-sm font-medium text-white bg-primary-600 rounded-md hover:bg-primary-700"
+                >
+                  Agregar variante
+                </button>
+              )}
+
+              {/* Submodels list */}
+              {isLoadingSubmodels ? (
+                <p className="text-sm text-gray-500">Cargando variantes...</p>
+              ) : submodels.length === 0 ? (
+                <p className="text-sm text-gray-500">No hay variantes creadas para esta version.</p>
+              ) : (
+                <div className="space-y-3">
+                  {submodels.map((sub) => {
+                    const asset = getSubmodelAssetStatus(sub)
+                    const isUploading = uploadingSubmodelId === sub.id
+
+                    return (
+                      <div
+                        key={sub.id}
+                        className="flex items-center justify-between p-4 rounded-lg border border-gray-200 bg-white"
+                      >
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-3">
+                            <span className="text-sm font-medium text-gray-900">{sub.name}</span>
+                            <span className="text-xs text-gray-400">Orden: {sub.sortOrder}</span>
+                          </div>
+                          <div className="mt-1">
+                            {isUploading ? (
+                              <div className="flex items-center gap-2">
+                                <div className="w-24 h-2 bg-gray-200 rounded-full overflow-hidden">
+                                  <div
+                                    className="h-full bg-primary-600 transition-all duration-300"
+                                    style={{ width: `${subUploadProgress}%` }}
+                                  />
+                                </div>
+                                <span className="text-xs text-gray-500">{subUploadProgress}%</span>
+                              </div>
+                            ) : !asset ? (
+                              <button
+                                onClick={() => triggerSubmodelFileInput(sub.id)}
+                                className="text-xs text-primary-600 hover:text-primary-700 font-medium"
+                              >
+                                Subir modelo 3D
+                              </button>
+                            ) : (
+                              <div className="flex items-center gap-2">
+                                <span
+                                  className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium ${
+                                    asset.status === 'READY'
+                                      ? 'bg-green-100 text-green-800'
+                                      : asset.status === 'FAILED'
+                                      ? 'bg-red-100 text-red-800'
+                                      : asset.status === 'PROCESSING'
+                                      ? 'bg-blue-100 text-blue-800'
+                                      : 'bg-yellow-100 text-yellow-800'
+                                  }`}
+                                >
+                                  {asset.status === 'READY'
+                                    ? 'Listo'
+                                    : asset.status === 'FAILED'
+                                    ? 'Error'
+                                    : asset.status === 'PROCESSING'
+                                    ? 'Procesando...'
+                                    : 'Pendiente'}
+                                </span>
+                                {(asset.status === 'READY' || asset.status === 'FAILED') && (
+                                  <button
+                                    onClick={() => triggerSubmodelFileInput(sub.id)}
+                                    className="text-xs text-gray-500 hover:text-gray-700"
+                                  >
+                                    {asset.status === 'FAILED' ? 'Reintentar' : 'Reemplazar'}
+                                  </button>
+                                )}
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-2 ml-4">
+                          <button
+                            onClick={() => openSubmodelEdit(sub)}
+                            className="text-xs text-primary-600 hover:text-primary-900"
+                          >
+                            Editar
+                          </button>
+                          {deletingSubmodelId === sub.id ? (
+                            <>
+                              <button
+                                onClick={() => handleDeleteSubmodel(sub.id)}
+                                className="text-xs text-red-600 hover:text-red-900"
+                              >
+                                Confirmar
+                              </button>
+                              <button
+                                onClick={() => setDeletingSubmodelId(null)}
+                                className="text-xs text-gray-600 hover:text-gray-900"
+                              >
+                                Cancelar
+                              </button>
+                            </>
+                          ) : (
+                            <button
+                              onClick={() => setDeletingSubmodelId(sub.id)}
+                              className="text-xs text-red-600 hover:text-red-900"
+                            >
+                              Eliminar
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                    )
+                  })}
+                </div>
+              )}
+
+              <div className="mt-6 flex justify-end">
+                <button
+                  type="button"
+                  onClick={closeSubmodelsModal}
                   className="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500"
                 >
                   Cerrar

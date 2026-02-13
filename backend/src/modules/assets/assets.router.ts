@@ -61,7 +61,8 @@ router.post(
       req.body.versionId,
       req.body.filename,
       req.body.contentType,
-      req.body.sizeBytes
+      req.body.sizeBytes,
+      req.body.submodelId
     )
     res.status(201).json(result)
   })

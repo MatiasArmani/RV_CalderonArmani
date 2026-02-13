@@ -9,6 +9,7 @@ import { prisma } from '../../lib/prisma'
 export interface CreateAssetInput {
   companyId: string
   versionId: string
+  submodelId?: string | null
   kind: AssetKind
   storageKey: string
   contentType: string
@@ -46,14 +47,18 @@ export async function findById(id: string) {
 }
 
 /**
- * Find SOURCE_GLB assets for a version
+ * Find SOURCE_GLB asset for a version, optionally filtered by submodel
+ * When submodelId is undefined: finds base model (submodelId IS NULL)
+ * When submodelId is a string: finds that submodel's asset
  */
-export async function findSourceGlbByVersion(versionId: string) {
+export async function findSourceGlbByVersion(versionId: string, submodelId?: string | null) {
   return prisma.asset.findFirst({
     where: {
       versionId,
       kind: 'SOURCE_GLB',
+      submodelId: submodelId ?? null,
     },
+    orderBy: { createdAt: 'desc' },
   })
 }
 
@@ -65,6 +70,7 @@ export async function create(data: CreateAssetInput) {
     data: {
       companyId: data.companyId,
       versionId: data.versionId,
+      submodelId: data.submodelId ?? null,
       kind: data.kind,
       status: 'PENDING_UPLOAD',
       storageKey: data.storageKey,

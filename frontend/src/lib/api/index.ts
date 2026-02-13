@@ -18,8 +18,15 @@ export {
   type CreateShareResponse,
 } from './shares'
 export {
+  submodelsApi,
+  type Submodel,
+  type CreateSubmodelInput,
+  type UpdateSubmodelInput,
+} from './submodels'
+export {
   publicApi,
   getExperience,
   PublicApiError,
   type PublicExperience,
+  type PublicSubmodel,
 } from './public'

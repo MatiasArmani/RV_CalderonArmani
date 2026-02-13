@@ -5,6 +5,16 @@
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? ''
 
+export interface PublicSubmodel {
+  id: string
+  name: string
+  sortOrder: number
+  assets: {
+    glbUrl: string
+    thumbUrl: string | null
+  }
+}
+
 export interface PublicExperience {
   product: {
     name: string
@@ -15,6 +25,7 @@ export interface PublicExperience {
     thumbUrl: string | null
     usdzUrl: string | null
   }
+  submodels: PublicSubmodel[]
   share: {
     expiresAt: string
     remainingVisits: number | null

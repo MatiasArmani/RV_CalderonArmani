@@ -46,6 +46,9 @@ export async function findByToken(token: string) {
         include: {
           product: true,
           assets: true,
+          submodels: {
+            orderBy: { sortOrder: 'asc' },
+          },
         },
       },
     },

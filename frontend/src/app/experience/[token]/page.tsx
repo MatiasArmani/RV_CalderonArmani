@@ -2,7 +2,7 @@
 
 import { useEffect, useState, useRef, useCallback } from 'react'
 import { useParams } from 'next/navigation'
-import { getExperience, startVisit, endVisit, PublicApiError, type PublicExperience } from '@/lib/api/public'
+import { getExperience, startVisit, endVisit, PublicApiError, type PublicExperience, type PublicSubmodel } from '@/lib/api/public'
 
 type AppState = 'loading' | 'ready' | 'error' | 'ar-scanning' | 'ar-placed' | 'viewer-fallback'
 
@@ -20,6 +20,10 @@ export default function ExperiencePage() {
   const [modelReady, setModelReady] = useState(false)
   const [isStartingAR, setIsStartingAR] = useState(false)
   const [isSheetMinimized, setIsSheetMinimized] = useState(false)
+
+  // Submodel selector state
+  const [selectedSubmodel, setSelectedSubmodel] = useState<string | null>(null) // null = base model
+  const [isSwappingModel, setIsSwappingModel] = useState(false)
 
   // Joystick visual state
   const [knobPos, setKnobPos] = useState({ x: 0, y: 0 })
@@ -399,6 +403,103 @@ export default function ExperiencePage() {
     }
   }, [])
 
+  // ── Swap submodel (viewer-fallback + AR) ──────────────────
+  const swapModel = useCallback(async (submodelId: string | null) => {
+    if (!experience || !sceneRef.current || !engineRef.current) return
+    if (submodelId === selectedSubmodel) return
+
+    setIsSwappingModel(true)
+
+    // Determine the GLB URL for the selected variant
+    let glbUrl: string
+    if (submodelId === null) {
+      glbUrl = experience.assets.glbUrl
+    } else {
+      const sub = experience.submodels.find((s) => s.id === submodelId)
+      if (!sub) {
+        setIsSwappingModel(false)
+        return
+      }
+      glbUrl = sub.assets.glbUrl
+    }
+
+    const scene = sceneRef.current
+    const currentState = appStateRef.current
+    const isInAR = currentState === 'ar-scanning' || currentState === 'ar-placed'
+
+    try {
+      const BABYLON = await import('@babylonjs/core')
+      const { SceneLoader } = await import('@babylonjs/core/Loading/sceneLoader')
+
+      if (isInAR) {
+        // AR mode: preserve position/rotation, only dispose model meshes
+        let savedPosition: import('@babylonjs/core').Vector3 | null = null
+        let savedRotation: import('@babylonjs/core').Vector3 | null = null
+        let wasEnabled = false
+
+        if (modelRef.current) {
+          savedPosition = modelRef.current.position.clone()
+          savedRotation = modelRef.current.rotation.clone()
+          wasEnabled = modelRef.current.isEnabled()
+          // Dispose model root + all children
+          modelRef.current.getChildMeshes().forEach((m) => m.dispose())
+          modelRef.current.dispose()
+          modelRef.current = null
+        }
+
+        // Load new model
+        const { meshes } = await SceneLoader.ImportMeshAsync('', '', glbUrl, scene)
+
+        if (meshes.length > 0) {
+          const root = meshes[0]
+          root.rotationQuaternion = null // use Euler for rotation slider
+
+          if (currentState === 'ar-placed' && savedPosition) {
+            root.position = savedPosition
+            root.rotation = savedRotation || BABYLON.Vector3.Zero()
+            root.setEnabled(wasEnabled)
+          } else {
+            // Scanning: keep model hidden until placed
+            root.position = BABYLON.Vector3.Zero()
+            root.rotation = BABYLON.Vector3.Zero()
+            root.setEnabled(false)
+          }
+
+          modelRef.current = root
+        }
+        setModelReady(true)
+      } else {
+        // Viewer-fallback mode: dispose all meshes, refit camera
+        const meshesToDispose = [...scene.meshes]
+        meshesToDispose.forEach((m) => m.dispose())
+
+        const { meshes } = await SceneLoader.ImportMeshAsync('', '', glbUrl, scene)
+
+        const camera = scene.activeCamera as import('@babylonjs/core').ArcRotateCamera
+        if (camera && meshes.length > 0) {
+          let min = new BABYLON.Vector3(Infinity, Infinity, Infinity)
+          let max = new BABYLON.Vector3(-Infinity, -Infinity, -Infinity)
+          meshes.forEach((m) => {
+            if (m.getBoundingInfo) {
+              const bi = m.getBoundingInfo()
+              min = BABYLON.Vector3.Minimize(min, bi.boundingBox.minimumWorld)
+              max = BABYLON.Vector3.Maximize(max, bi.boundingBox.maximumWorld)
+            }
+          })
+          camera.target = min.add(max).scale(0.5)
+          camera.radius = Math.max(...[max.x - min.x, max.y - min.y, max.z - min.z]) * 2
+        }
+      }
+
+      setSelectedSubmodel(submodelId)
+    } catch (err) {
+      console.error('Failed to swap model:', err)
+      // Don't crash — user stays on current model
+    } finally {
+      setIsSwappingModel(false)
+    }
+  }, [experience, selectedSubmodel])
+
   // ── Joystick movement loop ────────────────────────────────
   const joystickLoop = useCallback(() => {
     if (!joystickActiveRef.current) return
@@ -702,6 +803,45 @@ export default function ExperiencePage() {
             <p className="text-xs text-gray-400">{experience.product.versionLabel}</p>
           </header>
 
+          {/* Submodel selector */}
+          {experience.submodels.length > 0 && (
+            <div className="px-3 py-2 pointer-events-auto shrink-0">
+              <div className="flex gap-2 overflow-x-auto pb-1">
+                <button
+                  onClick={() => swapModel(null)}
+                  disabled={isSwappingModel}
+                  className={`shrink-0 px-4 py-2 rounded-full text-sm font-medium transition-colors ${
+                    selectedSubmodel === null
+                      ? 'bg-blue-600 text-white shadow-md'
+                      : 'bg-white/90 text-gray-700 border border-gray-300 active:bg-gray-100'
+                  } disabled:opacity-50`}
+                >
+                  {experience.product.name}
+                </button>
+                {experience.submodels.map((sub) => (
+                  <button
+                    key={sub.id}
+                    onClick={() => swapModel(sub.id)}
+                    disabled={isSwappingModel}
+                    className={`shrink-0 px-4 py-2 rounded-full text-sm font-medium transition-colors ${
+                      selectedSubmodel === sub.id
+                        ? 'bg-blue-600 text-white shadow-md'
+                        : 'bg-white/90 text-gray-700 border border-gray-300 active:bg-gray-100'
+                    } disabled:opacity-50`}
+                  >
+                    {sub.name}
+                  </button>
+                ))}
+              </div>
+              {isSwappingModel && (
+                <div className="flex items-center justify-center gap-2 mt-1">
+                  <div className="animate-spin rounded-full h-4 w-4 border-2 border-blue-600 border-t-transparent" />
+                  <span className="text-xs text-gray-500">Cargando variante...</span>
+                </div>
+              )}
+            </div>
+          )}
+
           <div className="flex-1" />
 
           {/* Gesture hint */}
@@ -766,6 +906,45 @@ export default function ExperiencePage() {
               <div className="w-11" />
             </div>
           </div>
+
+          {/* ── AR Submodel selector (scanning) ── */}
+          {appState === 'ar-scanning' && experience.submodels.length > 0 && (
+            <div className="absolute top-24 left-0 right-0 px-3 pointer-events-auto" style={{ zIndex: 5 }}>
+              <div className="flex gap-2 overflow-x-auto pb-1 justify-center">
+                <button
+                  onClick={() => swapModel(null)}
+                  disabled={isSwappingModel || !modelReady}
+                  className={`shrink-0 px-4 py-2 rounded-full text-sm font-medium backdrop-blur-sm transition-colors ${
+                    selectedSubmodel === null
+                      ? 'bg-white text-gray-900 shadow-md'
+                      : 'bg-black/40 text-white border border-white/25 active:bg-black/60'
+                  } disabled:opacity-50`}
+                >
+                  {experience.product.name}
+                </button>
+                {experience.submodels.map((sub) => (
+                  <button
+                    key={sub.id}
+                    onClick={() => swapModel(sub.id)}
+                    disabled={isSwappingModel || !modelReady}
+                    className={`shrink-0 px-4 py-2 rounded-full text-sm font-medium backdrop-blur-sm transition-colors ${
+                      selectedSubmodel === sub.id
+                        ? 'bg-white text-gray-900 shadow-md'
+                        : 'bg-black/40 text-white border border-white/25 active:bg-black/60'
+                    } disabled:opacity-50`}
+                  >
+                    {sub.name}
+                  </button>
+                ))}
+              </div>
+              {isSwappingModel && (
+                <div className="flex items-center justify-center gap-2 mt-2">
+                  <div className="animate-spin rounded-full h-4 w-4 border-2 border-white border-t-transparent" />
+                  <span className="text-xs text-white/80">Cargando variante...</span>
+                </div>
+              )}
+            </div>
+          )}
 
           {/* ── SCANNING: animated target + instructions ── */}
           {appState === 'ar-scanning' && (
@@ -845,6 +1024,45 @@ export default function ExperiencePage() {
                     Reposicionar
                   </button>
                 </div>
+
+                {/* Submodel selector in bottom sheet */}
+                {experience.submodels.length > 0 && (
+                  <div className="mb-3">
+                    <div className="flex gap-2 overflow-x-auto pb-1">
+                      <button
+                        onClick={() => swapModel(null)}
+                        disabled={isSwappingModel}
+                        className={`shrink-0 px-4 py-2 rounded-full text-sm font-medium transition-colors ${
+                          selectedSubmodel === null
+                            ? 'bg-blue-600 text-white shadow-md'
+                            : 'bg-gray-100 text-gray-700 border border-gray-300 active:bg-gray-200'
+                        } disabled:opacity-50`}
+                      >
+                        {experience.product.name}
+                      </button>
+                      {experience.submodels.map((sub) => (
+                        <button
+                          key={sub.id}
+                          onClick={() => swapModel(sub.id)}
+                          disabled={isSwappingModel}
+                          className={`shrink-0 px-4 py-2 rounded-full text-sm font-medium transition-colors ${
+                            selectedSubmodel === sub.id
+                              ? 'bg-blue-600 text-white shadow-md'
+                              : 'bg-gray-100 text-gray-700 border border-gray-300 active:bg-gray-200'
+                          } disabled:opacity-50`}
+                        >
+                          {sub.name}
+                        </button>
+                      ))}
+                    </div>
+                    {isSwappingModel && (
+                      <div className="flex items-center justify-center gap-2 mt-1">
+                        <div className="animate-spin rounded-full h-4 w-4 border-2 border-blue-600 border-t-transparent" />
+                        <span className="text-xs text-gray-500">Cargando variante...</span>
+                      </div>
+                    )}
+                  </div>
+                )}
 
                 {/* Controls: rotation slider + joystick side by side */}
                 <div className="flex gap-4 items-start">
