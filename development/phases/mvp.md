@@ -153,7 +153,7 @@ Estas validaciones ocurren en `POST /api/assets/upload-url` (pre-upload) y al in
 1. **Pre-upload (upload-url)**:
    - `contentType === "model/gltf-binary"` → si no: `VALIDATION_ERROR: "Only GLB files are supported"`
    - `sizeBytes > 0` → si no: `VALIDATION_ERROR: "File cannot be empty"`
-   - `sizeBytes <= 100MB (104857600 bytes)` → si no: `VALIDATION_ERROR: "File size exceeds 100MB limit"`
+   - `sizeBytes <= 500MB (524288000 bytes)` → si no: `VALIDATION_ERROR: "File size exceeds 500MB limit"`
    - `fileName` tiene extensión `.glb` → si no: `VALIDATION_ERROR: "File must have .glb extension"`
 
 2. **Post-upload (procesamiento)**:
@@ -275,7 +275,7 @@ Cuando el procesamiento falla:
 
 #### Timeouts y Límites
 
-- **Upload timeout** (signed URL TTL): 15 minutos (ver `storage.md`)
+- **Upload timeout** (signed URL TTL): 30 minutos (1800 segundos) para archivos grandes hasta 500MB (ver `storage.md`)
 - **Processing timeout**: 2 minutos máximo por GLB
   - Si excede: marca `FAILED` con `errorMessage: "Processing timeout exceeded"`
 - **Retry policy**: Usuario puede reintentar manualmente (botón en UI)
@@ -385,4 +385,15 @@ Cuando el procesamiento falla:
 - Shares temporales seguros (expira + maxVisits + revoke)
 - Tracking mínimo funcional
 - Suite de unit tests esenciales pasa en CI
+
+---
+
+## Estado de Implementación MVP
+
+✅ **Etapa 1** - Setup base
+✅ **Etapa 2** - Auth + Multi-tenant
+✅ **Etapa 3** - CRUD Projects/Products/Versions
+✅ **Etapa 4** - Assets Upload + Processing
+✅ **Etapa 5** - Experiencia pública: Viewer 3D + AR
+✅ **Etapa 6** - Tracking mínimo (Visits)
 ```

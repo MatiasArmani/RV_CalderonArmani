@@ -37,6 +37,18 @@ Extiende el MVP manteniendo **KISS/YAGNI** y sin introducir arquitectura inneces
 - Swap de modelo no rompe viewer (fallback si falla carga)
 - Estado de carga visible
 
+### Implementación Completada ✅
+
+- Tabla `Submodel` en Prisma schema con relación a `Version`
+- API REST completa (GET, POST, PATCH, DELETE) en `/api/versions/:versionId/submodels` y `/api/submodels/:id`
+- Upload de assets por submodelo (mismo flujo que Version, opcionalmente asociados a `submodelId`)
+- Frontend admin: CRUD completo en panel de versión
+- Public viewer: Selector horizontal de variantes con swap en vivo sin perder estado AR
+- Preservación de posición y rotación al cambiar submodelo en AR
+- Funciona en AR (WebXR) y Viewer-fallback (Babylon orbit)
+- Re-fit automático de cámara en viewer al cambiar modelo
+- Loading states durante swap de modelo
+
 ---
 
 ## Etapa 8 — Analíticas avanzadas (Dashboard)
@@ -66,6 +78,22 @@ Extiende el MVP manteniendo **KISS/YAGNI** y sin introducir arquitectura inneces
 ### QA Checklist
 - Performance OK con índices
 - Resultados consistentes con tabla Visit
+
+### Implementación Completada ✅
+
+- Dashboard analytics en `/analytics` con interfaz completa
+- Filtros de fecha con presets (7 días, 30 días, 90 días) y rango personalizado (date pickers)
+- KPI Cards:
+  - Total visitas
+  - Links activos (shares con visitas)
+  - Duración promedio (formato m:s)
+  - Tasa AR (porcentaje de visitas que usaron AR)
+- Gráfico de barras SVG mostrando visitas por día
+- Device breakdown: Mobile vs Desktop con porcentaje y barras visuales
+- Top productos: Lista ordenada por visitCount con barras de progreso
+- Backend endpoint `GET /api/analytics/dashboard?from=YYYY-MM-DD&to=YYYY-MM-DD`
+- Agregaciones SQL eficientes con filtrado por `companyId`
+- Link a `/visits` para ver detalle completo de visitas
 
 ---
 
@@ -134,4 +162,57 @@ Extiende el MVP manteniendo **KISS/YAGNI** y sin introducir arquitectura inneces
 - Seguridad reforzada sin fricción excesiva
 - Viewer más estable y rápido
 - Documentación actualizada (API/Datos/Flujos) por cada cambio
+
+---
+
+## Estado de Implementación Fase 2
+
+✅ **Etapa 7** - Submodelos/Variantes (COMPLETADA)
+✅ **Etapa 8** - Analytics Dashboard (COMPLETADA)
+🔄 **Etapa 9** - Hardening de Seguridad (EN PROGRESO)
+  - Rate limiting implementado en todos los endpoints
+  - CORS restrictivo configurado
+  - Helmet headers aplicados
+  - Validaciones de payload estrictas
+  - Pendiente: Auditoría completa de logs
+
+🔄 **Etapa 10** - Performance UX (PARCIALMENTE COMPLETADA)
+  - USDZ conversion implementada
+  - Viewer optimizado para mobile
+  - Límite de archivos ampliado a 500MB con timeout de 30 min
+  - Pendiente: Optimización automática de GLB (Draco compression opcional)
+
+---
+
+## Mejoras Adicionales Implementadas (No Planificadas)
+
+Durante el desarrollo se implementaron features adicionales para mejorar la experiencia AR:
+
+✅ **Joystick de movimiento en AR**
+  - Velocidad: 0.8 m/s a máximo desplazamiento
+  - Control táctil y mouse
+  - Loop requestAnimationFrame para movimiento suave
+  - Restricción a plano XZ (altura fija)
+
+✅ **Control de rotación con slider**
+  - Rango: 0-360°
+  - Actualización en tiempo real del modelo
+  - Indicador visual del ángulo actual
+
+✅ **Bottom sheet minimizable en AR**
+  - Drag handle para minimizar/expandir
+  - Floating button cuando está minimizado
+  - Animaciones suaves slide-up/slide-down
+
+✅ **Swap de submodelos preservando estado AR**
+  - Mantiene posición (x, y, z) al cambiar modelo
+  - Mantiene rotación (y-axis)
+  - Loading state durante descarga
+  - Fallback silencioso en caso de error
+
+✅ **Loading states mejorados en AR**
+  - Modelo descarga en background mientras usuario escanea
+  - Instrucciones contextuales adaptativas
+  - Feedback visual durante procesamiento
+  - Timeout handling robusto
 ```

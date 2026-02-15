@@ -32,7 +32,8 @@
       "Bash(aws configure:*)",
       "Bash(grep:*)",
       "Bash(wc:*)",
-      "Bash(ls:*)"
+      "Bash(ls:*)",
+      "Bash(git -C \"/d/Usuario/Matias/Proyectos/RV_CalderonArmani\" log --oneline -20)"
     ]
   }
 }

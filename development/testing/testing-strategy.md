@@ -468,7 +468,7 @@ Además de tests automatizados, cada etapa requiere validación manual antes de 
 
 ### Etapa 4 (Assets):
 - [ ] Upload GLB: progress visible
-- [ ] Upload GLB >100MB rechazado con mensaje claro
+- [ ] Upload GLB >500MB rechazado con mensaje claro
 - [ ] Asset pasa de PENDING_UPLOAD → UPLOADED → PROCESSING → READY
 - [ ] Thumbnail se genera y muestra
 - [ ] USDZ se genera (si aplica en MVP)

@@ -41,6 +41,8 @@ Define pantallas, flujos, estados UI, permisos y endpoints consumidos por cada p
 ### Public (Sin Auth)
 ```
 /experience/:token                    # Viewer 3D + AR público
+  ├─ AR Controls (Modo Colocado)      # Joystick, rotation, reposition
+  └─ Submodel Selector                # Selector de variantes
 ```
 
 ---
@@ -385,7 +387,7 @@ Define pantallas, flujos, estados UI, permisos y endpoints consumidos por cada p
 1. `GET /api/versions/:id`
 2. `GET /api/assets?versionId=:id`
 3. Usuario click "Subir Modelo 3D"
-4. Selecciona archivo GLB (validación client-side: extension, size < 100MB)
+4. Selecciona archivo GLB (validación client-side: extension, size < 500MB)
 5. `POST /api/assets/upload-url` con `{ versionId, fileName, contentType, sizeBytes }`
 6. Backend retorna `{ assetId, upload: { url, method, headers } }`
 7. Frontend:
@@ -546,6 +548,128 @@ Define pantallas, flujos, estados UI, permisos y endpoints consumidos por cada p
 - `LoadingOverlay`: progress + branding
 - `ErrorScreen`: mensajes específicos por tipo de error
 - `ProductInfo`: nombre + versión (minimal)
+
+---
+
+### 2.13 Experience: AR Controls (Modo Colocado)
+
+**Permisos**: Público (dentro de sesión AR)
+**Objetivo**: Control fino del modelo colocado en AR.
+
+**Estados UI**:
+- Bottom sheet expandido: controles visibles
+- Bottom sheet minimizado: floating button
+- Reposicionamiento activo: reticle visible con instrucciones
+
+**Controles disponibles**:
+
+#### 1. Rotation Slider
+- **Rango**: 0-360°
+- **Input**: `<input type="range">`
+- **Update**: En tiempo real sobre modelo (rotation.y)
+- **Display**: Valor numérico "{rotation}°"
+
+#### 2. Joystick de Movimiento
+- **Visual**: Círculo con knob arrastrable
+- **Input**: Touch/mouse drag
+- **Velocidad**: 0.8 m/s a máximo desplazamiento
+- **Ejes**: X (izquierda/derecha), Z (adelante/atrás)
+- **Implementación**: RequestAnimationFrame loop
+- **Restricciones**: Solo en plano XZ (altura Y fija)
+
+#### 3. Botón "Mover modelo"
+- Inicia modo reposicionamiento
+- Muestra reticle de nuevo
+- Permite tap-to-place en nueva ubicación
+- Al confirmar: vuelve a bottom sheet
+
+#### 4. Botón "Reposicionar"
+- Resetea a modo scanning
+- Oculta modelo
+- Permite seleccionar nueva superficie
+
+#### 5. Bottom Sheet Minimizar/Expandir
+- Drag handle en tope de sheet
+- Tap para minimizar → muestra floating button
+- Floating button (esquina inferior derecha) → tap para expandir
+
+**Flujo de interacción**:
+1. Usuario coloca modelo → bottom sheet se abre automáticamente
+2. Usuario puede:
+   - Rotar con slider
+   - Mover con joystick (ajuste fino)
+   - Cambiar variante (si hay submodelos)
+   - Minimizar sheet para vista despejada
+   - Reposicionar completamente
+3. Minimizado: solo floating button visible
+4. Expandir: bottom sheet slide-up con animación
+
+**Endpoints**: N/A (solo frontend)
+
+**Componentes clave**:
+- `JoystickControl`: Touch/mouse handler con physics loop
+- `RotationSlider`: Input range + display
+- `BottomSheet`: Expandible/minimizable container
+- `FloatingButton`: Action button (minimized state)
+
+---
+
+### 2.14 Experience: Submodel Selector
+
+**Permisos**: Público
+**Objetivo**: Cambiar entre variantes de producto en AR/Viewer.
+
+**Ubicación UI**:
+- **AR Scanning**: Horizontal scroll en top (debajo de header)
+- **AR Placed**: Dentro de bottom sheet (arriba de controles)
+- **Viewer Fallback**: Debajo de header
+
+**Estados UI**:
+- Loading: "Cargando variante..." con spinner
+- Ready: Lista de botones pills
+- Error: Fallback silencioso (permanece en variante actual)
+
+**Flujo**:
+1. `GET /api/public/experience/:token` retorna lista de submodelos
+2. Frontend renderiza selector si `submodels.length > 0`
+3. Botones:
+   - Modelo base (nombre del producto)
+   - Submodelos (nombre de cada variante)
+4. Click en variante:
+   - Marca como `isSwappingModel: true`
+   - Descarga nuevo GLB
+   - En AR: Preserva posición y rotación
+   - En Viewer: Re-fit camera
+   - Disposa meshes anteriores
+   - Carga nuevo modelo
+5. Actualiza `selectedSubmodel` state
+
+**Preservación de estado (AR)**:
+- Position (x, y, z)
+- Rotation (y-axis)
+- Enabled (visible/oculto)
+
+**Endpoints**:
+- `GET /api/public/experience/:token` incluye:
+  ```json
+  {
+    "submodels": [
+      {
+        "id": "submodel-uuid",
+        "name": "Variante Roja",
+        "assets": {
+          "glbUrl": "https://...",
+          "thumbUrl": "https://..."
+        }
+      }
+    ]
+  }
+  ```
+
+**Componentes clave**:
+- `SubmodelSelector`: Horizontal scroll de pills
+- `SubmodelButton`: Pill button con estado activo
+- `SwapLoader`: Inline spinner durante carga
 
 ---
 

@@ -64,13 +64,14 @@ abc-123-company-uuid/projects/proj-456/products/prod-789/versions/ver-001/usdz/m
 Signed URLs tienen tiempo de vida limitado por seguridad.
 
 ### Upload (PUT)
-- **TTL**: 15 minutos (900 segundos)
+- **TTL**: 30 minutos (1800 segundos)
 - **Uso**: Usuario sube archivo desde frontend
+- **Justificación**: Permite upload de archivos de hasta 500MB en conexiones lentas
 - **Generación**: `POST /api/assets/upload-url` retorna signed PUT URL
 - **Límites**:
   - 1 URL por asset
   - Single upload (no multipart en MVP)
-  - Expira si no se usa en 15 min
+  - Expira si no se usa en 30 min
 
 **Implementación (AWS SDK v3)**:
 ```typescript
@@ -84,7 +85,7 @@ const command = new PutObjectCommand({
   ContentType: contentType,
 })
 
-const url = await getSignedUrl(s3Client, command, { expiresIn: 900 }) // 15 min
+const url = await getSignedUrl(s3Client, command, { expiresIn: 1800 }) // 30 min
 ```
 
 ### Read (GET)
@@ -245,8 +246,8 @@ Para que frontend pueda subir directamente vía signed URL:
 ## 7) Límites y Quotas (MVP)
 
 ### Por Asset:
-- **Max size upload**: 100 MB (104857600 bytes)
-- **Timeout upload**: 15 minutos (signed URL TTL)
+- **Max size upload**: 500 MB (524288000 bytes)
+- **Timeout upload**: 30 minutos (signed URL TTL para archivos grandes)
 - **Timeout processing**: 2 minutos
 
 ### Por Tenant (opcional MVP, recomendado Fase 2):

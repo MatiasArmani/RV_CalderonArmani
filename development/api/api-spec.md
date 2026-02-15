@@ -269,6 +269,95 @@ Reglas:
 
 ---
 
+## 6.5) Submodels (privado - Fase 2)
+
+Los submodelos son variantes de una Version (por ejemplo, diferentes colores o configuraciones del mismo producto).
+
+### GET /api/versions/:versionId/submodels
+Obtiene todos los submodelos de una versión.
+
+Response:
+```json
+{
+  "submodels": [
+    {
+      "id": "submodel-uuid",
+      "versionId": "version-uuid",
+      "name": "Variante Roja",
+      "description": "Modelo con acabado rojo",
+      "createdAt": "2024-01-15T10:00:00Z",
+      "assets": [
+        {
+          "id": "asset-uuid",
+          "kind": "SOURCE_GLB",
+          "status": "READY",
+          "meta": {
+            "glbUrl": "https://...signed...",
+            "thumbUrl": "https://...signed..."
+          }
+        }
+      ]
+    }
+  ]
+}
+```
+
+### POST /api/versions/:versionId/submodels
+Crea un nuevo submodelo.
+
+Request:
+```json
+{
+  "name": "Variante Azul",
+  "description": "Modelo con acabado azul"
+}
+```
+
+Response:
+```json
+{
+  "id": "submodel-uuid",
+  "versionId": "version-uuid",
+  "name": "Variante Azul",
+  "description": "Modelo con acabado azul",
+  "createdAt": "2024-01-15T10:00:00Z"
+}
+```
+
+### PATCH /api/submodels/:id
+Actualiza nombre o descripción del submodelo.
+
+Request:
+```json
+{
+  "name": "Nuevo nombre",
+  "description": "Nueva descripción"
+}
+```
+
+Response:
+```json
+{
+  "id": "submodel-uuid",
+  "versionId": "version-uuid",
+  "name": "Nuevo nombre",
+  "description": "Nueva descripción",
+  "updatedAt": "2024-01-15T11:00:00Z"
+}
+```
+
+### DELETE /api/submodels/:id
+Elimina el submodelo y sus assets asociados.
+
+Response: 204 No Content
+
+Reglas:
+- `versionId` debe pertenecer al tenant
+- Assets se asocian opcionalmente a `submodelId` (mismo flujo que Version)
+- En endpoint público, los submodelos se incluyen en `GET /api/public/experience/:token`
+
+---
+
 ## 7) Assets (privado)
 
 ### GET /api/assets?versionId=...
@@ -431,16 +520,58 @@ Reglas:
 
 ---
 
-## 11) (Fase 2) Analytics (privado)
-Solo se habilita en Fase 2 y se documenta completo allí.
+## 11) Analytics (privado - Fase 2 IMPLEMENTADO)
 
-Sugeridos:
-- GET /api/analytics/overview?from=...&to=...
-- GET /api/analytics/top-products?from=...&to=...
-- GET /api/analytics/visits-by-day?from=...&to=...
+### GET /api/analytics/dashboard
+Obtiene métricas agregadas de visitas y shares para el dashboard de analytics.
 
-Regla:
-- todo filtrado por companyId
+Query params:
+- `from`: YYYY-MM-DD (required) - Fecha inicio del rango
+- `to`: YYYY-MM-DD (required) - Fecha fin del rango
+
+Response:
+```json
+{
+  "overview": {
+    "totalVisits": 1250,
+    "uniqueShares": 45,
+    "avgDurationMs": 125000,
+    "arRate": 0.68,
+    "deviceBreakdown": {
+      "mobile": 850,
+      "desktop": 400
+    }
+  },
+  "visitsPerDay": [
+    { "date": "2024-01-15", "count": 42 },
+    { "date": "2024-01-16", "count": 38 }
+  ],
+  "topProducts": [
+    {
+      "versionId": "version-uuid",
+      "productName": "Excavadora XL",
+      "versionLabel": "v2.0",
+      "visitCount": 145
+    }
+  ]
+}
+```
+
+Detalles de campos:
+- `totalVisits`: Total de visitas en el rango de fechas
+- `uniqueShares`: Cantidad de shares que tuvieron al menos 1 visita
+- `avgDurationMs`: Duración promedio de visitas en milisegundos
+- `arRate`: Porcentaje de visitas que usaron AR (0.0 a 1.0)
+- `deviceBreakdown`: Cantidad de visitas por tipo de dispositivo
+- `visitsPerDay`: Array con conteo de visitas por día
+- `topProducts`: Productos más visitados (ordenados por visitCount descendente)
+
+Reglas:
+- Todo filtrado por `companyId` del usuario autenticado
+- Solo ADMIN puede acceder
+- Fechas en formato YYYY-MM-DD
+- Si `from > to`, retorna error 400
+- Máximo rango: 1 año
 
 ---
 
