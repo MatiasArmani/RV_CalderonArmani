@@ -30,3 +30,12 @@ export {
   type PublicExperience,
   type PublicSubmodel,
 } from './public'
+export {
+  analyticsApi,
+  type AnalyticsDashboard,
+  type AnalyticsOverview,
+  type VisitsPerDay,
+  type TopProduct,
+  type DeviceBreakdown,
+  type AnalyticsFilters,
+} from './analytics'

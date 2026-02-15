@@ -20,6 +20,7 @@ import { sharesRouter } from './modules/shares/index'
 import { publicRouter } from './modules/public/index'
 import { visitsRouter } from './modules/visits/index'
 import { submodelsRouter } from './modules/submodels/index'
+import { analyticsRouter } from './modules/analytics/index'
 
 export function createApp(): Express {
   const app = express()
@@ -92,6 +93,7 @@ export function createApp(): Express {
   app.use('/api/shares', sharesRouter)
   app.use('/api/submodels', submodelsRouter)
   app.use('/api/visits', visitsRouter)
+  app.use('/api/analytics', analyticsRouter)
   app.use('/api/public', publicRouter)
 
   // Global error handler (must be last)

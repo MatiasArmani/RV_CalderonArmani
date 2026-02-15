@@ -31,7 +31,8 @@
       "Bash(aws:*)",
       "Bash(aws configure:*)",
       "Bash(grep:*)",
-      "Bash(wc:*)"
+      "Bash(wc:*)",
+      "Bash(ls:*)"
     ]
   }
 }

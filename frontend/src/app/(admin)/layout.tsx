@@ -17,6 +17,7 @@ export default function AdminLayout({
   const navigation = [
     { name: 'Dashboard', href: '/dashboard' },
     { name: 'Proyectos', href: '/projects' },
+    { name: 'Analiticas', href: '/analytics' },
     { name: 'Visitas', href: '/visits' },
   ]
 
