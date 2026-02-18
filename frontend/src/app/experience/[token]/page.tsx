@@ -6,6 +6,55 @@ import { getExperience, startVisit, endVisit, PublicApiError, type PublicExperie
 
 type AppState = 'loading' | 'ready' | 'error' | 'ar-scanning' | 'ar-placed' | 'viewer-fallback'
 
+// ── IndexedDB GLB cache ──────────────────────────────────────────────────────
+// Persists downloaded GLB blobs across page reloads, keyed by share token.
+// The token is stable for the life of the share link, so it makes a safe cache key.
+const GLB_DB_NAME = 'rv-glb-cache'
+const GLB_STORE = 'glbs'
+const GLB_TTL_MS = 7 * 24 * 3600 * 1000 // 7 days
+
+function openGlbDb(): Promise<IDBDatabase> {
+  return new Promise((resolve, reject) => {
+    const req = indexedDB.open(GLB_DB_NAME, 1)
+    req.onupgradeneeded = (e) => {
+      const db = (e.target as IDBOpenDBRequest).result
+      if (!db.objectStoreNames.contains(GLB_STORE)) {
+        db.createObjectStore(GLB_STORE, { keyPath: 'token' })
+      }
+    }
+    req.onsuccess = (e) => resolve((e.target as IDBOpenDBRequest).result)
+    req.onerror = (e) => reject((e.target as IDBOpenDBRequest).error)
+  })
+}
+
+async function getCachedGlb(token: string): Promise<Blob | null> {
+  try {
+    const db = await openGlbDb()
+    return new Promise((resolve) => {
+      const tx = db.transaction(GLB_STORE, 'readonly')
+      const req = tx.objectStore(GLB_STORE).get(token)
+      req.onsuccess = () => {
+        const record = req.result as { token: string; blob: Blob; cachedAt: number } | undefined
+        if (!record || Date.now() - record.cachedAt > GLB_TTL_MS) { resolve(null); return }
+        resolve(record.blob)
+      }
+      req.onerror = () => resolve(null)
+    })
+  } catch { return null }
+}
+
+async function cacheGlb(token: string, blob: Blob): Promise<void> {
+  try {
+    const db = await openGlbDb()
+    await new Promise<void>((resolve) => {
+      const tx = db.transaction(GLB_STORE, 'readwrite')
+      tx.objectStore(GLB_STORE).put({ token, blob, cachedAt: Date.now() })
+      tx.oncomplete = () => resolve()
+      tx.onerror = () => resolve()
+    })
+  } catch { /* fail silently — cache is best-effort */ }
+}
+
 export default function ExperiencePage() {
   const params = useParams()
   const token = params.token as string
@@ -189,8 +238,8 @@ export default function ExperiencePage() {
   }
 
   // Downloads the GLB via XHR so we can track progress.
-  // Returns a local blob URL ready to pass to Babylon's SceneLoader.
-  const downloadWithProgress = useCallback((url: string): Promise<string> => {
+  // Returns the raw Blob so the caller can cache it and create a blob URL.
+  const downloadWithProgress = useCallback((url: string): Promise<Blob> => {
     return new Promise((resolve, reject) => {
       const xhr = new XMLHttpRequest()
       xhrRef.current = xhr
@@ -219,10 +268,8 @@ export default function ExperiencePage() {
 
       xhr.onload = () => {
         if (xhr.status === 200 || xhr.status === 0) {
-          const blobUrl = URL.createObjectURL(xhr.response as Blob)
-          blobUrlRef.current = blobUrl
           xhrRef.current = null
-          resolve(blobUrl)
+          resolve(xhr.response as Blob)
         } else {
           reject(new Error(`Error HTTP ${xhr.status} al descargar el modelo`))
         }
@@ -256,7 +303,6 @@ export default function ExperiencePage() {
 
     setIsLoading3D(true)
     setIsLoadingMinimized(false)
-    setDownloadProgress({ phase: 'downloading', percent: 0, loadedMB: 0, totalMB: 0, speedMBs: 0, etaSeconds: Infinity })
 
     // Dispose any existing Babylon engine/scene before creating a new one.
     cleanup()
@@ -269,11 +315,23 @@ export default function ExperiencePage() {
       await import('@babylonjs/loaders/glTF')
       const { SceneLoader } = await import('@babylonjs/core/Loading/sceneLoader')
 
-      // ── Phase 1: Download GLB with XHR so we can track progress ──
-      const blobUrl = await downloadWithProgress(experience.assets.glbUrl)
+      // ── Phase 1: Check IndexedDB cache, download only if needed ──
+      let blob = await getCachedGlb(token)
+      if (blob) {
+        // Cache hit — skip download UI, go straight to parsing
+        setDownloadProgress({ phase: 'parsing', percent: 0, loadedMB: 0, totalMB: 0, speedMBs: 0, etaSeconds: 0 })
+      } else {
+        // Cache miss — show download progress
+        setDownloadProgress({ phase: 'downloading', percent: 0, loadedMB: 0, totalMB: 0, speedMBs: 0, etaSeconds: Infinity })
+        blob = await downloadWithProgress(experience.assets.glbUrl)
+        // Store in IndexedDB for future reloads (fire-and-forget)
+        cacheGlb(token, blob)
+        // ── Phase 2: Babylon parsing ──
+        setDownloadProgress({ phase: 'parsing', percent: 0, loadedMB: 0, totalMB: 0, speedMBs: 0, etaSeconds: 0 })
+      }
 
-      // ── Phase 2: Babylon parsing (CPU-side, no network progress) ──
-      setDownloadProgress({ phase: 'parsing', percent: 0, loadedMB: 0, totalMB: 0, speedMBs: 0, etaSeconds: 0 })
+      const blobUrl = URL.createObjectURL(blob)
+      blobUrlRef.current = blobUrl
 
       const engine = new Engine(canvas, true, { preserveDrawingBuffer: true, stencil: true })
       engineRef.current = engine
@@ -357,7 +415,7 @@ export default function ExperiencePage() {
       })
       setAppState('error')
     }
-  }, [experience, cleanup, downloadWithProgress])
+  }, [experience, token, cleanup, downloadWithProgress])
 
   // ── AR session ────────────────────────────────────────────
   const startARSession = useCallback(async () => {
