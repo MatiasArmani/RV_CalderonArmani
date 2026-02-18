@@ -14,6 +14,9 @@ declare global {
         'ar-modes'?: string
         'camera-controls'?: boolean
         'shadow-intensity'?: string
+        loading?: 'auto' | 'lazy' | 'eager'
+        reveal?: 'auto' | 'interaction' | 'manual'
+        poster?: string
       }
     }
   }
@@ -118,9 +121,6 @@ export default function ExperiencePage() {
   const lastHitPoseRef = useRef<import('@babylonjs/core').Matrix | null>(null)
   const placedPositionRef = useRef<{ x: number; y: number; z: number } | null>(null)
   const overlayRef = useRef<HTMLDivElement>(null)
-
-  // ── iOS model-viewer ref (Quick Look AR) ─────────────────
-  const modelViewerRef = useRef<HTMLElement & { activateAR: () => void } | null>(null)
 
   // ── Download tracking refs ────────────────────────────────
   const xhrRef = useRef<XMLHttpRequest | null>(null)
@@ -967,17 +967,6 @@ export default function ExperiencePage() {
         style={{ touchAction: 'none' }}
       />
 
-      {/* ── model-viewer (iOS Quick Look AR) — visually hidden, always in DOM ── */}
-      {isIOSDevice && experience && (
-        // @ts-expect-error — model-viewer is a web component loaded via CDN script
-        <model-viewer
-          ref={modelViewerRef}
-          src={experience.assets.glbUrl}
-          ar
-          ar-modes="quick-look"
-          style={{ position: 'absolute', width: 0, height: 0, opacity: 0, pointerEvents: 'none' }}
-        />
-      )}
 
       {/* ══════════════════════════════════════════════════════
           READY STATE — opaque cover with preview + buttons
@@ -1019,28 +1008,46 @@ export default function ExperiencePage() {
                   Iniciar AR
                 </button>
               )}
-              {isIOSDevice && (
-                <button
-                  onClick={() => {
-                    const mv = modelViewerRef.current
-                    if (mv && typeof mv.activateAR === 'function') {
-                      mv.activateAR()
-                    } else {
-                      // model-viewer script still loading — try once loaded
-                      const check = setInterval(() => {
-                        const mv2 = modelViewerRef.current
-                        if (mv2 && typeof mv2.activateAR === 'function') {
-                          clearInterval(check)
-                          mv2.activateAR()
-                        }
-                      }, 200)
-                      setTimeout(() => clearInterval(check), 5000)
-                    }
-                  }}
-                  className="w-full py-4 bg-blue-600 text-white rounded-2xl font-semibold text-base shadow-md active:bg-blue-700"
-                >
-                  Iniciar AR
-                </button>
+              {isIOSDevice && experience && (
+                // Overlay approach: styled div (visual) + model-viewer with slot button (functional).
+                // The slot button receives the actual tap directly — no async gap, no gesture loss.
+                <div className="relative w-full" style={{ height: '56px' }}>
+                  {/* Visual layer — pointer-events disabled so taps pass through to slot button */}
+                  <div
+                    aria-hidden
+                    className="absolute inset-0 flex items-center justify-center bg-blue-600 text-white rounded-2xl font-semibold text-base shadow-md select-none pointer-events-none"
+                  >
+                    Iniciar AR
+                  </div>
+                  {/* model-viewer: transparent overlay, slot button covers entire area.
+                      reveal="interaction" keeps model-viewer in poster mode forever
+                      (AR-button tap is NOT considered a reveal interaction) so its
+                      internal WebGL canvas never renders the 3-D model on top of the
+                      visible "Iniciar AR" div below.
+                      poster + --poster-color make the placeholder fully transparent. */}
+                  {/* @ts-expect-error */}
+                  <model-viewer
+                    src={experience.assets.glbUrl}
+                    ar
+                    ar-modes="quick-look"
+                    loading="eager"
+                    reveal="interaction"
+                    poster="data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7"
+                    style={{
+                      position: 'absolute', inset: 0, width: '100%', height: '100%',
+                      background: 'transparent',
+                      '--poster-color': 'transparent',
+                    } as React.CSSProperties}
+                  >
+                    <button
+                      // @ts-expect-error
+                      slot="ar-button"
+                      style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', background: 'transparent', border: 'none', cursor: 'pointer' }}
+                      aria-label="Iniciar AR"
+                    />
+                  {/* @ts-expect-error */}
+                  </model-viewer>
+                </div>
               )}
 
               {/* 3-D viewer */}
