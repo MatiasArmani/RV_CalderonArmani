@@ -10,6 +10,7 @@ declare global {
     interface IntrinsicElements {
       'model-viewer': React.DetailedHTMLProps<React.HTMLAttributes<HTMLElement>, HTMLElement> & {
         src?: string
+        'ios-src'?: string
         ar?: boolean
         'ar-modes'?: string
         'camera-controls'?: boolean
@@ -1070,62 +1071,60 @@ export default function ExperiencePage() {
                 </button>
               )}
               {isIOSDevice && experience && (
-                // model-viewer off-screen: loads + converts GLB→USDZ without rendering in the UI.
-                // A real button calls activateAR() within the user-gesture handler.
-                // This avoids the 3-D canvas appearing over the button AND the slot-button
-                // visibility issues (model-viewer hides slot="ar-button" until USDZ is ready).
-                <>
-                  {/* Visible iOS AR button */}
-                  <button
-                    onClick={() => {
-                      const mv = modelViewerRef.current as any
-                      if (mv?.activateAR) {
-                        setMvDebug(p => ({ ...p, taps: p.taps + 1, lastEvent: `activateAR() call #${p.taps + 1}` }))
-                        mv.activateAR()
-                      } else {
-                        setMvDebug(p => ({ ...p, lastEvent: 'activateAR no disponible aún' }))
-                      }
-                    }}
-                    disabled={!mvReady}
-                    className={`w-full py-4 rounded-2xl font-semibold text-base shadow-md transition-colors ${
-                      mvReady
-                        ? 'bg-blue-600 text-white active:bg-blue-700'
-                        : 'bg-blue-400 text-white/80 cursor-not-allowed'
-                    }`}
+                // Overlay: visual div (always visible) + model-viewer with slot button.
+                //
+                // reveal="manual" → GLB downloads + USDZ converts immediately (load event fires),
+                //   but the 3-D canvas NEVER renders (requires explicit dismissPoster() call).
+                //   This is the key difference vs reveal="interaction" which defers scene init entirely.
+                //
+                // The user's physical tap MUST land on the slot="ar-button" inside model-viewer's
+                // shadow DOM <a rel="ar">. iOS Quick Look only triggers from a real user gesture
+                // on that anchor — programmatic activateAR()/click() do NOT count on iOS Safari.
+                <div className="relative w-full" style={{ height: '56px' }}>
+                  {/* Visual layer — always visible, pointer-events off so taps fall through */}
+                  <div
+                    aria-hidden
+                    className="absolute inset-0 flex items-center justify-center bg-blue-600 text-white rounded-2xl font-semibold text-base shadow-md select-none pointer-events-none"
+                    style={{ zIndex: 1 }}
                   >
-                    {mvReady ? (
-                      'Iniciar AR'
-                    ) : (
-                      <span className="flex items-center justify-center gap-2">
+                    {mvReady ? 'Iniciar AR' : (
+                      <span className="flex items-center gap-2">
                         <span className="inline-block w-4 h-4 rounded-full border-2 border-white border-t-transparent animate-spin" />
-                        {mvDebug.loadPct < 100
-                          ? `Preparando AR... ${mvDebug.loadPct}%`
-                          : 'Convirtiendo modelo...'}
+                        {mvDebug.loadPct < 100 ? `${mvDebug.loadPct}%` : 'Preparando...'}
                       </span>
                     )}
-                  </button>
+                  </div>
 
-                  {/* model-viewer off-screen: renders nothing visible but handles
-                      GLB download + GLB→USDZ conversion via WASM.
-                      Fixed position with real size so its ResizeObserver gets proper dimensions. */}
-                  {/* @ts-expect-error */}
+                  {/* model-viewer: fills the 56px container, fully transparent.
+                      ios-src → uses pre-built USDZ from S3 (real URL, no blob → works on iOS 17+).
+                      Without ios-src, model-viewer auto-converts GLB→USDZ via WASM but creates
+                      a blob URL that iOS 17+ Safari treats as navigation instead of Quick Look.
+                      poster (1×1 transparent GIF) + --poster-color keep it invisible.
+                      reveal="manual" → GLB loads but 3-D canvas never renders on the button. */}
                   <model-viewer
                     ref={modelViewerCallbackRef as unknown as React.RefObject<HTMLElement>}
                     src={experience.assets.glbUrl}
+                    ios-src={experience.assets.usdzUrl || undefined}
                     ar
                     ar-modes="quick-look"
                     loading="eager"
+                    reveal="manual"
+                    poster="data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7"
                     style={{
-                      position: 'fixed',
-                      left: '-200vw',
-                      top: 0,
-                      width: '150px',
-                      height: '150px',
-                      pointerEvents: 'none',
+                      position: 'absolute', inset: 0, width: '100%', height: '100%',
+                      zIndex: 2,
+                      background: 'transparent',
+                      '--poster-color': 'transparent',
                     } as React.CSSProperties}
-                  />
-                  {/* @ts-expect-error -- closing tag required for JSX */}
-                </>
+                  >
+                    <button
+                      slot="ar-button"
+                      onClick={() => setMvDebug(p => ({ ...p, taps: p.taps + 1, lastEvent: `slot-btn tap #${p.taps + 1}` }))}
+                      style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', background: 'transparent', border: 'none', cursor: 'pointer' }}
+                      aria-label="Iniciar AR"
+                    />
+                  </model-viewer>
+                </div>
               )}
 
               {/* ── iOS Quick Look debug panel ── */}
@@ -1137,8 +1136,10 @@ export default function ExperiencePage() {
                   lineHeight: 1.6,
                 }}>
                   <div style={{ color: '#aaa', marginBottom: 2, fontSize: 10 }}>🔍 DEBUG model-viewer</div>
+                  <div>ios-src: <span style={{ color: experience?.assets.usdzUrl ? '#1f6' : '#f55' }}>{experience?.assets.usdzUrl ? 'USDZ ✓' : 'NO (auto-convert, blob URL)'}</span></div>
                   <div>status: <span style={{ color: '#fff' }}>{mvDebug.status}</span></div>
                   <div>load: <span style={{ color: '#fff' }}>{mvDebug.loadPct}%</span></div>
+                  <div>mvReady: <span style={{ color: mvReady ? '#1f6' : '#f55' }}>{mvReady ? 'SI' : 'NO'}</span></div>
                   <div>ar-status: <span style={{ color: mvDebug.arStatus === 'failed' ? '#f55' : '#fff' }}>{mvDebug.arStatus}</span></div>
                   <div>taps btn: <span style={{ color: '#fff' }}>{mvDebug.taps}</span></div>
                   <div>last event: <span style={{ color: '#ff0' }}>{mvDebug.lastEvent}</span></div>

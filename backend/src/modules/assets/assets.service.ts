@@ -14,6 +14,7 @@ import {
   getPresignedUploadUrl,
   getPresignedDownloadUrl,
   getObjectMetadata,
+  downloadObject,
   downloadObjectRange,
   uploadObject,
 } from '../../lib/storage'
@@ -316,6 +317,45 @@ async function processAsset(
         thumbnailAssetId: thumb?.id,
       },
     })
+
+    // ── Best-effort USDZ conversion (for iOS Quick Look AR) ──────────────
+    // Runs AFTER GLB is marked READY so it never blocks the main pipeline.
+    // If conversion fails, iOS falls back to model-viewer's client-side WASM
+    // conversion (which has blob-URL issues on iOS 17+ but is better than nothing).
+    try {
+      const { convertGlbToUsdz } = await import('./usdz-converter')
+      const glbData = await downloadObject(asset.storageKey)
+      const usdzBuffer = await convertGlbToUsdz(glbData)
+
+      if (usdzBuffer) {
+        const usdzSubPrefix = asset.submodelId ? `sub_${asset.submodelId}/` : ''
+        const usdzStorageKey = buildStorageKey(
+          companyId,
+          asset.versionId,
+          'usdz',
+          `${usdzSubPrefix}model_${assetId}.usdz`
+        )
+
+        await uploadObject(usdzStorageKey, usdzBuffer, 'model/vnd.usdz+zip')
+
+        const usdzAsset = await assetsRepo.create({
+          companyId,
+          versionId: asset.versionId,
+          submodelId: asset.submodelId,
+          kind: 'USDZ',
+          storageKey: usdzStorageKey,
+          contentType: 'model/vnd.usdz+zip',
+          sizeBytes: usdzBuffer.length,
+          meta: {
+            sourceAssetId: assetId,
+          },
+        })
+        await assetsRepo.updateStatus(usdzAsset.id, 'READY')
+      }
+    } catch (usdzError) {
+      // Non-blocking: log and continue — GLB is already READY
+      console.warn('[USDZ] Conversion failed (non-blocking):', usdzError)
+    }
 
     return toDTO(updated)
   } catch (error) {
