@@ -189,9 +189,9 @@ export default function ExperiencePage() {
 
       const camera = new ArcRotateCamera('cam', Math.PI / 2, Math.PI / 3, 10, Vector3.Zero(), scene)
       camera.attachControl(canvas, true)
-      camera.lowerRadiusLimit = 0.5
-      camera.upperRadiusLimit = 100
-      camera.wheelDeltaPercentage = 0.01
+      // Limits and sensitivity are set post-load, normalized to model size.
+      // Setting fixed limits here causes problems for models in cm/mm units.
+      camera.inertia = 0.75 // Slightly less inertia than default (0.9) → feels more responsive
 
       new HemisphericLight('light', new Vector3(0, 1, 0), scene).intensity = 1.2
 
@@ -206,8 +206,33 @@ export default function ExperiencePage() {
             max = Vector3.Maximize(max, bi.boundingBox.maximumWorld)
           }
         })
+
+        // ── Normalize camera to model size ──────────────────────────────
+        // Industrial CAD models can be exported in m, cm, or mm, giving
+        // wildly different unit scales. All limits and speeds are derived
+        // from the model's bounding-box diagonal so the UX feels identical
+        // regardless of unit system.
+        const sizeX = max.x - min.x
+        const sizeY = max.y - min.y
+        const sizeZ = max.z - min.z
+        const modelSize = Math.max(sizeX, sizeY, sizeZ)
+
         camera.target = min.add(max).scale(0.5)
-        camera.radius = Math.max(...[max.x - min.x, max.y - min.y, max.z - min.z]) * 2
+        camera.radius = modelSize * 2.5 // initial frame: model fills ~40% of viewport
+
+        // Zoom limits: from very close-up (5%) to overview (15×)
+        camera.lowerRadiusLimit = modelSize * 0.05
+        camera.upperRadiusLimit = modelSize * 15
+
+        // Zoom speed: percentage of current radius per step (auto-scales with zoom level).
+        // 8% feels natural on mobile pinch and mouse wheel.
+        camera.wheelDeltaPercentage = 0.08
+        camera.pinchDeltaPercentage = 0.08
+
+        // Pan speed: panningSensibility = pixels required to pan 1 world unit.
+        // Formula: sensibility = 500 / modelSize → a ~500px swipe pans ≈ one model width.
+        // Clamped so tiny models don't feel too slow and huge models don't feel too jittery.
+        camera.panningSensibility = Math.min(Math.max(1, 500 / modelSize), 800)
       }
 
       setIsLoading3D(false)
