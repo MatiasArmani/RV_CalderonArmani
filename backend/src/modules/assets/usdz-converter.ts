@@ -1,7 +1,7 @@
 /**
  * GLB → USDZ converter using Three.js USDZExporter
  *
- * Runs server-side (Node.js 20+) with minimal DOM polyfills from `canvas`.
+ * Runs server-side (Node.js 20+) with DOM polyfills from `canvas`.
  * Best-effort: returns null on any failure so GLB processing is never blocked.
  *
  * Three.js is ESM-only (v0.160+), so all imports use dynamic import().
@@ -10,10 +10,16 @@
 import { createCanvas, Image } from 'canvas'
 import { logger } from '../../common/utils/logger'
 
+// Max texture resolution for USDZ output (keeps file size manageable for iOS)
+const MAX_TEXTURE_SIZE = 2048
+
 // ── Polyfills for Three.js in Node.js ────────────────────────────────────────
-// Three.js assumes browser globals. These minimal stubs satisfy GLTFLoader +
+// Three.js assumes browser globals. These stubs satisfy GLTFLoader +
 // USDZExporter without pulling in a full browser environment.
 let polyfillsApplied = false
+
+// Store raw Blob data so URL.createObjectURL can return data URIs synchronously
+const blobDataStore = new WeakMap<object, { buffer: Buffer; type: string }>()
 
 function ensurePolyfills(): void {
   if (polyfillsApplied) return
@@ -40,6 +46,66 @@ function ensurePolyfills(): void {
   if (!g.HTMLCanvasElement) g.HTMLCanvasElement = (createCanvas(0, 0) as unknown as { constructor: unknown }).constructor
   // OffscreenCanvas stub — USDZExporter might probe for it
   if (!g.OffscreenCanvas) g.OffscreenCanvas = class { constructor(public width = 1, public height = 1) {} }
+
+  // ── Blob wrapper: capture raw data for synchronous createObjectURL ────────
+  // GLTFLoader creates Blob([bufferView], {type}) for embedded images, then
+  // calls URL.createObjectURL(blob). Node.js has Blob but not createObjectURL.
+  // We patch Blob to capture the raw buffer, then return a data URI.
+  const OrigBlob = globalThis.Blob
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  ;(globalThis as any).Blob = class PatchedBlob extends OrigBlob {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    constructor(parts?: any[], options?: { type?: string }) {
+      super(parts as any, options as any)
+      if (parts?.[0] != null) {
+        const part = parts[0]
+        let buf: Buffer | null = null
+        if (part instanceof ArrayBuffer) {
+          buf = Buffer.from(part)
+        } else if (part instanceof Uint8Array) {
+          buf = Buffer.from(part.buffer, part.byteOffset, part.byteLength)
+        } else if (Buffer.isBuffer(part)) {
+          buf = part
+        }
+        if (buf) {
+          blobDataStore.set(this, { buffer: buf, type: options?.type || 'application/octet-stream' })
+        }
+      }
+    }
+  }
+
+  // ── URL.createObjectURL → data URI (for node-canvas Image) ────────────────
+  // GLTFLoader calls URL.createObjectURL(blob) then sets image.src = url.
+  // node-canvas Image supports data URIs, so we convert synchronously.
+  if (!URL.createObjectURL) {
+    URL.createObjectURL = (obj: Blob): string => {
+      const data = blobDataStore.get(obj)
+      if (data) {
+        return `data:${data.type};base64,${data.buffer.toString('base64')}`
+      }
+      return 'blob:node-fallback'
+    }
+  }
+  if (!URL.revokeObjectURL) {
+    URL.revokeObjectURL = (): void => { /* no-op in Node.js */ }
+  }
+
+  // ── canvas.toBlob polyfill (node-canvas doesn't have it) ──────────────────
+  // USDZExporter calls canvas.toBlob(callback, 'image/png', 1) to encode textures.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const CanvasProto = (createCanvas(0, 0) as any).constructor.prototype
+  if (!CanvasProto.toBlob) {
+    CanvasProto.toBlob = function (
+      callback: (blob: Blob) => void,
+      type?: string,
+      _quality?: number
+    ): void {
+      const mimeType = type === 'image/jpeg' ? 'image/jpeg' : 'image/png'
+      const buffer: Buffer = this.toBuffer(mimeType)
+      const blob = new Blob([buffer], { type: mimeType })
+      callback(blob)
+    }
+  }
 }
 
 // ── Public API ───────────────────────────────────────────────────────────────
@@ -80,9 +146,22 @@ export async function convertGlbToUsdz(glbBuffer: Buffer): Promise<Buffer | null
       scene.add(gltf.scene)
     }
 
-    // Export scene to USDZ
+    // Force FrontSide on all materials — USDZ doesn't support DoubleSide
+    scene.traverse((obj: InstanceType<typeof THREE.Object3D>) => {
+      const mesh = obj as InstanceType<typeof THREE.Mesh>
+      if (mesh.material) {
+        const mat = mesh.material as InstanceType<typeof THREE.MeshStandardMaterial>
+        if (mat.side === THREE.DoubleSide) {
+          mat.side = THREE.FrontSide
+        }
+      }
+    })
+
+    // Export scene to USDZ with capped texture resolution
     const exporter = new USDZExporter()
-    const usdzArrayBuffer = await exporter.parseAsync(scene)
+    const usdzArrayBuffer = await exporter.parseAsync(scene, {
+      maxTextureSize: MAX_TEXTURE_SIZE,
+    })
     const usdzBuffer = Buffer.from(usdzArrayBuffer)
 
     // Dispose Three.js objects to free memory

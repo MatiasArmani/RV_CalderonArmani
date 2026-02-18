@@ -87,7 +87,8 @@ export async function getPresignedUploadUrl(
  */
 export async function getPresignedDownloadUrl(
   storageKey: string,
-  expiresIn: number = 3600 // 1 hour default
+  expiresIn: number = 3600, // 1 hour default
+  responseContentDisposition?: string
 ): Promise<string> {
   const config = getConfig()
   const client = getS3Client()
@@ -95,6 +96,9 @@ export async function getPresignedDownloadUrl(
   const command = new GetObjectCommand({
     Bucket: config.AWS_S3_BUCKET,
     Key: storageKey,
+    ...(responseContentDisposition && {
+      ResponseContentDisposition: responseContentDisposition,
+    }),
   })
 
   return getSignedUrl(client, command, { expiresIn })

@@ -75,7 +75,11 @@ export async function getExperience(token: string): Promise<PublicExperienceDTO>
     ? await getPresignedDownloadUrl(thumbAsset.storageKey, 3600)
     : null
   const usdzUrl = usdzAsset
-    ? await getPresignedDownloadUrl(usdzAsset.storageKey, 3600)
+    ? await getPresignedDownloadUrl(
+        usdzAsset.storageKey,
+        3600,
+        'inline; filename="model.usdz"'
+      )
     : null
 
   // Build submodels with their assets
