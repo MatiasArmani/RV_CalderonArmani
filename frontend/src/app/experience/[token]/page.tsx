@@ -104,14 +104,6 @@ export default function ExperiencePage() {
   const [selectedSubmodel, setSelectedSubmodel] = useState<string | null>(null) // null = base model
   const [isSwappingModel, setIsSwappingModel] = useState(false)
 
-  // ── iOS Quick Look debug state ─────────────────────────────
-  const [mvDebug, setMvDebug] = useState<{
-    loadPct: number
-    status: string
-    arStatus: string
-    taps: number
-    lastEvent: string
-  }>({ loadPct: 0, status: 'no montado', arStatus: '—', taps: 0, lastEvent: '—' })
   const [mvReady, setMvReady] = useState(false) // true cuando model-viewer dispara 'load'
   const modelViewerRef = useRef<HTMLElement | null>(null)
 
@@ -263,54 +255,12 @@ export default function ExperiencePage() {
     return () => { if (document.head.contains(script)) document.head.removeChild(script) }
   }, [isIOSDevice])
 
-  // ── Callback ref: attaches model-viewer event listeners for debug ──────────
-  // Uses a callback ref so listeners are always attached to the current DOM node.
+  // ── Callback ref: attaches model-viewer event listeners ──────────
   const modelViewerCallbackRef = useCallback((node: HTMLElement | null) => {
     modelViewerRef.current = node
     if (!node) return
-
-    const log = (event: string, extra?: unknown) => {
-      const msg = extra ? `${event} | ${JSON.stringify(extra)}` : event
-      console.log(`[MV iOS] ${msg}`)
-      setMvDebug(p => ({ ...p, lastEvent: msg }))
-    }
-
-    const onProgress = (e: Event) => {
-      const pct = Math.round(((e as CustomEvent).detail?.totalProgress ?? 0) * 100)
-      setMvDebug(p => ({ ...p, loadPct: pct, status: pct >= 100 ? 'parseando USDZ...' : `descargando ${pct}%` }))
-      log(`progress ${pct}%`)
-    }
-    const onLoad = () => {
-      setMvReady(true)
-      setMvDebug(p => ({ ...p, status: 'loaded ✓ — AR listo' }))
-      log('load → modelo listo, AR disponible')
-    }
-    const onError = (e: Event) => {
-      const detail = (e as CustomEvent).detail
-      setMvDebug(p => ({ ...p, status: `⚠ error: ${JSON.stringify(detail)}` }))
-      log('error', detail)
-    }
-    const onArStatus = (e: Event) => {
-      const status = (e as CustomEvent).detail?.status ?? '?'
-      setMvDebug(p => ({ ...p, arStatus: status }))
-      log('ar-status', (e as CustomEvent).detail)
-    }
-    const onArTracking = (e: Event) => {
-      log('ar-tracking', (e as CustomEvent).detail)
-    }
-    const onQuickLookTapped = () => {
-      setMvDebug(p => ({ ...p, taps: p.taps + 1 }))
-      log('quick-look-button-tapped')
-    }
-
-    node.addEventListener('progress', onProgress)
+    const onLoad = () => setMvReady(true)
     node.addEventListener('load', onLoad)
-    node.addEventListener('error', onError)
-    node.addEventListener('ar-status', onArStatus)
-    node.addEventListener('ar-tracking', onArTracking)
-    node.addEventListener('quick-look-button-tapped', onQuickLookTapped)
-    setMvDebug(p => ({ ...p, status: 'montado, esperando script...' }))
-    log('model-viewer node attached')
   }, [])
 
   // ── Cleanup ───────────────────────────────────────────────
@@ -1090,7 +1040,7 @@ export default function ExperiencePage() {
                     {mvReady ? 'Iniciar AR' : (
                       <span className="flex items-center gap-2">
                         <span className="inline-block w-4 h-4 rounded-full border-2 border-white border-t-transparent animate-spin" />
-                        {mvDebug.loadPct < 100 ? `${mvDebug.loadPct}%` : 'Preparando...'}
+                        Preparando...
                       </span>
                     )}
                   </div>
@@ -1119,7 +1069,6 @@ export default function ExperiencePage() {
                   >
                     <button
                       slot="ar-button"
-                      onClick={() => setMvDebug(p => ({ ...p, taps: p.taps + 1, lastEvent: `slot-btn tap #${p.taps + 1}` }))}
                       style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', background: 'transparent', border: 'none', cursor: 'pointer' }}
                       aria-label="Iniciar AR"
                     />
@@ -1127,24 +1076,6 @@ export default function ExperiencePage() {
                 </div>
               )}
 
-              {/* ── iOS Quick Look debug panel ── */}
-              {isIOSDevice && (
-                <div style={{
-                  background: '#0a0a0a', border: '1px solid #1f6',
-                  borderRadius: 10, padding: '8px 12px',
-                  fontFamily: 'monospace', fontSize: 11, color: '#1f6',
-                  lineHeight: 1.6,
-                }}>
-                  <div style={{ color: '#aaa', marginBottom: 2, fontSize: 10 }}>🔍 DEBUG model-viewer</div>
-                  <div>ios-src: <span style={{ color: experience?.assets.usdzUrl ? '#1f6' : '#f55' }}>{experience?.assets.usdzUrl ? 'USDZ ✓' : 'NO (auto-convert, blob URL)'}</span></div>
-                  <div>status: <span style={{ color: '#fff' }}>{mvDebug.status}</span></div>
-                  <div>load: <span style={{ color: '#fff' }}>{mvDebug.loadPct}%</span></div>
-                  <div>mvReady: <span style={{ color: mvReady ? '#1f6' : '#f55' }}>{mvReady ? 'SI' : 'NO'}</span></div>
-                  <div>ar-status: <span style={{ color: mvDebug.arStatus === 'failed' ? '#f55' : '#fff' }}>{mvDebug.arStatus}</span></div>
-                  <div>taps btn: <span style={{ color: '#fff' }}>{mvDebug.taps}</span></div>
-                  <div>last event: <span style={{ color: '#ff0' }}>{mvDebug.lastEvent}</span></div>
-                </div>
-              )}
 
               {/* 3-D viewer */}
               {isLoading3D && isLoadingMinimized ? (
