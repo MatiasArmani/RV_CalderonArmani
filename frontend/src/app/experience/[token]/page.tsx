@@ -71,6 +71,7 @@ export default function ExperiencePage() {
   const [isSheetMinimized, setIsSheetMinimized] = useState(false)
   const [isLoading3D, setIsLoading3D] = useState(false)
   const [isLoadingMinimized, setIsLoadingMinimized] = useState(false)
+  const [arErrorMsg, setArErrorMsg] = useState<string | null>(null)
   const [downloadProgress, setDownloadProgress] = useState<{
     phase: 'downloading' | 'parsing'
     percent: number
@@ -420,6 +421,7 @@ export default function ExperiencePage() {
   // ── AR session ────────────────────────────────────────────
   const startARSession = useCallback(async () => {
     if (!experience || !canvasRef.current) return
+    setArErrorMsg(null)
     setIsStartingAR(true)
     const canvas = canvasRef.current
 
@@ -553,8 +555,10 @@ export default function ExperiencePage() {
       })
     } catch (err) {
       console.error('WebXR init error:', err)
+      cleanup()
       setIsStartingAR(false)
-      initViewerFallback()
+      const msg = err instanceof Error ? `${err.name}: ${err.message}` : String(err)
+      setArErrorMsg(msg)
       return
     }
 
@@ -1077,6 +1081,51 @@ export default function ExperiencePage() {
             <div className="w-2 h-2 bg-blue-500 rounded-full animate-bounce" style={{ animationDelay: '0ms' }} />
             <div className="w-2 h-2 bg-blue-500 rounded-full animate-bounce" style={{ animationDelay: '150ms' }} />
             <div className="w-2 h-2 bg-blue-500 rounded-full animate-bounce" style={{ animationDelay: '300ms' }} />
+          </div>
+        </div>
+      )}
+
+      {/* ══════════════════════════════════════════════════════
+          AR ERROR — modal when WebXR session fails
+          ══════════════════════════════════════════════════════ */}
+      {arErrorMsg && !isStartingAR && appState === 'ready' && (
+        <div className="absolute inset-0 z-40 flex items-end justify-center pb-10 px-5 bg-black/50">
+          <div className="bg-white rounded-2xl shadow-xl w-full max-w-sm p-6">
+            <div className="flex items-center gap-3 mb-3">
+              <div className="w-10 h-10 bg-red-100 rounded-full flex items-center justify-center shrink-0">
+                <svg className="w-5 h-5 text-red-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m-9.303 3.376a12 12 0 1021.593 0M12 15.75h.007v.008H12v-.008z" />
+                </svg>
+              </div>
+              <div>
+                <p className="font-semibold text-gray-900 text-sm">AR no pudo iniciarse</p>
+                <p className="text-gray-500 text-xs mt-0.5">Asegúrate de estar en una red segura (HTTPS)</p>
+              </div>
+            </div>
+            {/* Error técnico — útil para diagnóstico */}
+            <p className="text-xs text-gray-400 bg-gray-50 rounded-lg px-3 py-2 mb-4 font-mono break-all">
+              {arErrorMsg}
+            </p>
+            <div className="flex flex-col gap-2">
+              <button
+                onClick={startARSession}
+                className="w-full py-3 bg-blue-600 text-white rounded-xl font-semibold text-sm active:bg-blue-700"
+              >
+                Reintentar AR
+              </button>
+              <button
+                onClick={() => { setArErrorMsg(null); initViewerFallback() }}
+                className="w-full py-3 bg-gray-100 text-gray-700 rounded-xl font-semibold text-sm active:bg-gray-200"
+              >
+                Ver en 3D
+              </button>
+              <button
+                onClick={() => setArErrorMsg(null)}
+                className="w-full py-2 text-gray-400 text-sm"
+              >
+                Cerrar
+              </button>
+            </div>
           </div>
         </div>
       )}
