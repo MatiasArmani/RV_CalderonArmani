@@ -103,6 +103,17 @@ export default function ExperiencePage() {
   const [selectedSubmodel, setSelectedSubmodel] = useState<string | null>(null) // null = base model
   const [isSwappingModel, setIsSwappingModel] = useState(false)
 
+  // ── iOS Quick Look debug state ─────────────────────────────
+  const [mvDebug, setMvDebug] = useState<{
+    loadPct: number
+    status: string
+    arStatus: string
+    taps: number
+    lastEvent: string
+  }>({ loadPct: 0, status: 'no montado', arStatus: '—', taps: 0, lastEvent: '—' })
+  const [mvReady, setMvReady] = useState(false) // true cuando model-viewer dispara 'load'
+  const modelViewerRef = useRef<HTMLElement | null>(null)
+
   // Joystick visual state
   const [knobPos, setKnobPos] = useState({ x: 0, y: 0 })
 
@@ -250,6 +261,56 @@ export default function ExperiencePage() {
     document.head.appendChild(script)
     return () => { if (document.head.contains(script)) document.head.removeChild(script) }
   }, [isIOSDevice])
+
+  // ── Callback ref: attaches model-viewer event listeners for debug ──────────
+  // Uses a callback ref so listeners are always attached to the current DOM node.
+  const modelViewerCallbackRef = useCallback((node: HTMLElement | null) => {
+    modelViewerRef.current = node
+    if (!node) return
+
+    const log = (event: string, extra?: unknown) => {
+      const msg = extra ? `${event} | ${JSON.stringify(extra)}` : event
+      console.log(`[MV iOS] ${msg}`)
+      setMvDebug(p => ({ ...p, lastEvent: msg }))
+    }
+
+    const onProgress = (e: Event) => {
+      const pct = Math.round(((e as CustomEvent).detail?.totalProgress ?? 0) * 100)
+      setMvDebug(p => ({ ...p, loadPct: pct, status: pct >= 100 ? 'parseando USDZ...' : `descargando ${pct}%` }))
+      log(`progress ${pct}%`)
+    }
+    const onLoad = () => {
+      setMvReady(true)
+      setMvDebug(p => ({ ...p, status: 'loaded ✓ — AR listo' }))
+      log('load → modelo listo, AR disponible')
+    }
+    const onError = (e: Event) => {
+      const detail = (e as CustomEvent).detail
+      setMvDebug(p => ({ ...p, status: `⚠ error: ${JSON.stringify(detail)}` }))
+      log('error', detail)
+    }
+    const onArStatus = (e: Event) => {
+      const status = (e as CustomEvent).detail?.status ?? '?'
+      setMvDebug(p => ({ ...p, arStatus: status }))
+      log('ar-status', (e as CustomEvent).detail)
+    }
+    const onArTracking = (e: Event) => {
+      log('ar-tracking', (e as CustomEvent).detail)
+    }
+    const onQuickLookTapped = () => {
+      setMvDebug(p => ({ ...p, taps: p.taps + 1 }))
+      log('quick-look-button-tapped')
+    }
+
+    node.addEventListener('progress', onProgress)
+    node.addEventListener('load', onLoad)
+    node.addEventListener('error', onError)
+    node.addEventListener('ar-status', onArStatus)
+    node.addEventListener('ar-tracking', onArTracking)
+    node.addEventListener('quick-look-button-tapped', onQuickLookTapped)
+    setMvDebug(p => ({ ...p, status: 'montado, esperando script...' }))
+    log('model-viewer node attached')
+  }, [])
 
   // ── Cleanup ───────────────────────────────────────────────
   const cleanup = useCallback(() => {
@@ -1009,44 +1070,78 @@ export default function ExperiencePage() {
                 </button>
               )}
               {isIOSDevice && experience && (
-                // Overlay approach: styled div (visual) + model-viewer with slot button (functional).
-                // The slot button receives the actual tap directly — no async gap, no gesture loss.
-                <div className="relative w-full" style={{ height: '56px' }}>
-                  {/* Visual layer — pointer-events disabled so taps pass through to slot button */}
-                  <div
-                    aria-hidden
-                    className="absolute inset-0 flex items-center justify-center bg-blue-600 text-white rounded-2xl font-semibold text-base shadow-md select-none pointer-events-none"
+                // model-viewer off-screen: loads + converts GLB→USDZ without rendering in the UI.
+                // A real button calls activateAR() within the user-gesture handler.
+                // This avoids the 3-D canvas appearing over the button AND the slot-button
+                // visibility issues (model-viewer hides slot="ar-button" until USDZ is ready).
+                <>
+                  {/* Visible iOS AR button */}
+                  <button
+                    onClick={() => {
+                      const mv = modelViewerRef.current as any
+                      if (mv?.activateAR) {
+                        setMvDebug(p => ({ ...p, taps: p.taps + 1, lastEvent: `activateAR() call #${p.taps + 1}` }))
+                        mv.activateAR()
+                      } else {
+                        setMvDebug(p => ({ ...p, lastEvent: 'activateAR no disponible aún' }))
+                      }
+                    }}
+                    disabled={!mvReady}
+                    className={`w-full py-4 rounded-2xl font-semibold text-base shadow-md transition-colors ${
+                      mvReady
+                        ? 'bg-blue-600 text-white active:bg-blue-700'
+                        : 'bg-blue-400 text-white/80 cursor-not-allowed'
+                    }`}
                   >
-                    Iniciar AR
-                  </div>
-                  {/* model-viewer: transparent overlay, slot button covers entire area.
-                      reveal="interaction" keeps model-viewer in poster mode forever
-                      (AR-button tap is NOT considered a reveal interaction) so its
-                      internal WebGL canvas never renders the 3-D model on top of the
-                      visible "Iniciar AR" div below.
-                      poster + --poster-color make the placeholder fully transparent. */}
+                    {mvReady ? (
+                      'Iniciar AR'
+                    ) : (
+                      <span className="flex items-center justify-center gap-2">
+                        <span className="inline-block w-4 h-4 rounded-full border-2 border-white border-t-transparent animate-spin" />
+                        {mvDebug.loadPct < 100
+                          ? `Preparando AR... ${mvDebug.loadPct}%`
+                          : 'Convirtiendo modelo...'}
+                      </span>
+                    )}
+                  </button>
+
+                  {/* model-viewer off-screen: renders nothing visible but handles
+                      GLB download + GLB→USDZ conversion via WASM.
+                      Fixed position with real size so its ResizeObserver gets proper dimensions. */}
                   {/* @ts-expect-error */}
                   <model-viewer
+                    ref={modelViewerCallbackRef as unknown as React.RefObject<HTMLElement>}
                     src={experience.assets.glbUrl}
                     ar
                     ar-modes="quick-look"
                     loading="eager"
-                    reveal="interaction"
-                    poster="data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7"
                     style={{
-                      position: 'absolute', inset: 0, width: '100%', height: '100%',
-                      background: 'transparent',
-                      '--poster-color': 'transparent',
+                      position: 'fixed',
+                      left: '-200vw',
+                      top: 0,
+                      width: '150px',
+                      height: '150px',
+                      pointerEvents: 'none',
                     } as React.CSSProperties}
-                  >
-                    <button
-                      // @ts-expect-error
-                      slot="ar-button"
-                      style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', background: 'transparent', border: 'none', cursor: 'pointer' }}
-                      aria-label="Iniciar AR"
-                    />
-                  {/* @ts-expect-error */}
-                  </model-viewer>
+                  />
+                  {/* @ts-expect-error -- closing tag required for JSX */}
+                </>
+              )}
+
+              {/* ── iOS Quick Look debug panel ── */}
+              {isIOSDevice && (
+                <div style={{
+                  background: '#0a0a0a', border: '1px solid #1f6',
+                  borderRadius: 10, padding: '8px 12px',
+                  fontFamily: 'monospace', fontSize: 11, color: '#1f6',
+                  lineHeight: 1.6,
+                }}>
+                  <div style={{ color: '#aaa', marginBottom: 2, fontSize: 10 }}>🔍 DEBUG model-viewer</div>
+                  <div>status: <span style={{ color: '#fff' }}>{mvDebug.status}</span></div>
+                  <div>load: <span style={{ color: '#fff' }}>{mvDebug.loadPct}%</span></div>
+                  <div>ar-status: <span style={{ color: mvDebug.arStatus === 'failed' ? '#f55' : '#fff' }}>{mvDebug.arStatus}</span></div>
+                  <div>taps btn: <span style={{ color: '#fff' }}>{mvDebug.taps}</span></div>
+                  <div>last event: <span style={{ color: '#ff0' }}>{mvDebug.lastEvent}</span></div>
                 </div>
               )}
 
