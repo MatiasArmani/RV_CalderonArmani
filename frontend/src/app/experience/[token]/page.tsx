@@ -21,6 +21,15 @@ export default function ExperiencePage() {
   const [isStartingAR, setIsStartingAR] = useState(false)
   const [isSheetMinimized, setIsSheetMinimized] = useState(false)
   const [isLoading3D, setIsLoading3D] = useState(false)
+  const [isLoadingMinimized, setIsLoadingMinimized] = useState(false)
+  const [downloadProgress, setDownloadProgress] = useState<{
+    phase: 'downloading' | 'parsing'
+    percent: number
+    loadedMB: number
+    totalMB: number
+    speedMBs: number
+    etaSeconds: number
+  } | null>(null)
 
   // Submodel selector state
   const [selectedSubmodel, setSelectedSubmodel] = useState<string | null>(null) // null = base model
@@ -44,6 +53,10 @@ export default function ExperiencePage() {
   const lastHitPoseRef = useRef<import('@babylonjs/core').Matrix | null>(null)
   const placedPositionRef = useRef<{ x: number; y: number; z: number } | null>(null)
   const overlayRef = useRef<HTMLDivElement>(null)
+
+  // ── Download tracking refs ────────────────────────────────
+  const xhrRef = useRef<XMLHttpRequest | null>(null)
+  const blobUrlRef = useRef<string | null>(null)
 
   // ── Joystick refs ──────────────────────────────────────────
   const joystickContainerRef = useRef<HTMLDivElement>(null)
@@ -161,15 +174,91 @@ export default function ExperiencePage() {
 
   useEffect(() => () => cleanup(), [cleanup])
 
+  // ── Download helpers ──────────────────────────────────────
+  function formatETA(seconds: number): string {
+    if (!isFinite(seconds) || seconds > 3600) return 'calculando...'
+    if (seconds < 60) return `${Math.round(seconds)} seg`
+    const mins = Math.floor(seconds / 60)
+    const secs = Math.round(seconds % 60)
+    return `${mins} min${secs > 0 ? ` ${secs} seg` : ''}`
+  }
+
+  function formatSpeed(mbps: number): string {
+    if (mbps < 0.1) return `${Math.round(mbps * 1024)} KB/s`
+    return `${mbps.toFixed(1)} MB/s`
+  }
+
+  // Downloads the GLB via XHR so we can track progress.
+  // Returns a local blob URL ready to pass to Babylon's SceneLoader.
+  const downloadWithProgress = useCallback((url: string): Promise<string> => {
+    return new Promise((resolve, reject) => {
+      const xhr = new XMLHttpRequest()
+      xhrRef.current = xhr
+      const startTime = Date.now()
+
+      xhr.open('GET', url)
+      xhr.responseType = 'blob'
+
+      xhr.onprogress = (e) => {
+        const elapsed = (Date.now() - startTime) / 1000
+        const speedBytesPerSec = elapsed > 0 ? e.loaded / elapsed : 0
+        const total = e.total > 0 ? e.total : 0
+        const remaining = (speedBytesPerSec > 0 && total > 0)
+          ? (total - e.loaded) / speedBytesPerSec
+          : Infinity
+
+        setDownloadProgress({
+          phase: 'downloading',
+          percent: total > 0 ? Math.min(99, Math.round((e.loaded / total) * 100)) : 0,
+          loadedMB: e.loaded / 1048576,
+          totalMB: total / 1048576,
+          speedMBs: speedBytesPerSec / 1048576,
+          etaSeconds: remaining,
+        })
+      }
+
+      xhr.onload = () => {
+        if (xhr.status === 200 || xhr.status === 0) {
+          const blobUrl = URL.createObjectURL(xhr.response as Blob)
+          blobUrlRef.current = blobUrl
+          xhrRef.current = null
+          resolve(blobUrl)
+        } else {
+          reject(new Error(`Error HTTP ${xhr.status} al descargar el modelo`))
+        }
+      }
+
+      xhr.onerror = () => reject(new Error('Error de red al descargar el modelo'))
+      xhr.onabort = () => reject(new Error('ABORTED'))
+
+      xhr.send()
+    })
+  }, [])
+
+  const cancelDownload = useCallback(() => {
+    if (xhrRef.current) {
+      xhrRef.current.abort()
+      xhrRef.current = null
+    }
+    if (blobUrlRef.current) {
+      URL.revokeObjectURL(blobUrlRef.current)
+      blobUrlRef.current = null
+    }
+    setDownloadProgress(null)
+    setIsLoading3D(false)
+    setIsLoadingMinimized(false)
+    cleanup()
+  }, [cleanup])
+
   // ── 3-D viewer fallback (orbit, no AR) ────────────────────
   const initViewerFallback = useCallback(async () => {
     if (!experience || !canvasRef.current) return
 
     setIsLoading3D(true)
+    setIsLoadingMinimized(false)
+    setDownloadProgress({ phase: 'downloading', percent: 0, loadedMB: 0, totalMB: 0, speedMBs: 0, etaSeconds: Infinity })
 
     // Dispose any existing Babylon engine/scene before creating a new one.
-    // This is critical when AR failed and left a render loop running on the canvas;
-    // without cleanup, creating a second engine on the same canvas fails silently.
     cleanup()
 
     const canvas = canvasRef.current
@@ -180,6 +269,12 @@ export default function ExperiencePage() {
       await import('@babylonjs/loaders/glTF')
       const { SceneLoader } = await import('@babylonjs/core/Loading/sceneLoader')
 
+      // ── Phase 1: Download GLB with XHR so we can track progress ──
+      const blobUrl = await downloadWithProgress(experience.assets.glbUrl)
+
+      // ── Phase 2: Babylon parsing (CPU-side, no network progress) ──
+      setDownloadProgress({ phase: 'parsing', percent: 0, loadedMB: 0, totalMB: 0, speedMBs: 0, etaSeconds: 0 })
+
       const engine = new Engine(canvas, true, { preserveDrawingBuffer: true, stencil: true })
       engineRef.current = engine
 
@@ -189,13 +284,16 @@ export default function ExperiencePage() {
 
       const camera = new ArcRotateCamera('cam', Math.PI / 2, Math.PI / 3, 10, Vector3.Zero(), scene)
       camera.attachControl(canvas, true)
-      // Limits and sensitivity are set post-load, normalized to model size.
-      // Setting fixed limits here causes problems for models in cm/mm units.
-      camera.inertia = 0.75 // Slightly less inertia than default (0.9) → feels more responsive
+      camera.inertia = 0.75
 
       new HemisphericLight('light', new Vector3(0, 1, 0), scene).intensity = 1.2
 
-      const { meshes } = await SceneLoader.ImportMeshAsync('', '', experience.assets.glbUrl, scene)
+      const { meshes } = await SceneLoader.ImportMeshAsync('', '', blobUrl, scene)
+
+      // Release the blob URL — model is now in GPU memory
+      URL.revokeObjectURL(blobUrl)
+      blobUrlRef.current = null
+
       if (meshes.length > 0) {
         let min = new Vector3(Infinity, Infinity, Infinity)
         let max = new Vector3(-Infinity, -Infinity, -Infinity)
@@ -234,19 +332,32 @@ export default function ExperiencePage() {
         camera.panningSensibility = Math.min(Math.max(1, 1200 / modelSize), 1200)
       }
 
+      setDownloadProgress(null)
       setIsLoading3D(false)
+      setIsLoadingMinimized(false)
       setAppState('viewer-fallback')
       engine.runRenderLoop(() => scene.render())
       window.addEventListener('resize', () => engine.resize())
     } catch (err) {
+      // Clean up any partial blob URL
+      if (blobUrlRef.current) {
+        URL.revokeObjectURL(blobUrlRef.current)
+        blobUrlRef.current = null
+      }
+      setDownloadProgress(null)
       setIsLoading3D(false)
+      setIsLoadingMinimized(false)
+
+      // User cancelled — silently return to ready screen
+      if (err instanceof Error && err.message === 'ABORTED') return
+
       setError({
         code: 'LOAD_ERROR',
         message: `Error al cargar el modelo 3D: ${err instanceof Error ? err.message : String(err)}`,
       })
       setAppState('error')
     }
-  }, [experience, cleanup])
+  }, [experience, cleanup, downloadWithProgress])
 
   // ── AR session ────────────────────────────────────────────
   const startARSession = useCallback(async () => {
@@ -302,7 +413,7 @@ export default function ExperiencePage() {
     setModelReady(false)
 
     // Helper: rejects after ms milliseconds to prevent indefinite hangs
-    const withTimeout = <T>(promise: Promise<T>, ms: number): Promise<T> =>
+    const withTimeout = <T,>(promise: Promise<T>, ms: number): Promise<T> =>
       Promise.race([
         promise,
         new Promise<never>((_, reject) =>
@@ -786,23 +897,72 @@ export default function ExperiencePage() {
                 </a>
               )}
 
-              {/* 3-D viewer (always available as secondary) */}
-              <button
-                onClick={initViewerFallback}
-                disabled={isLoading3D}
-                className="w-full py-3.5 bg-white border border-gray-300 text-gray-700 rounded-2xl font-medium text-base active:bg-gray-50 disabled:opacity-60 flex items-center justify-center gap-2"
-              >
-                {isLoading3D ? (
-                  <>
-                    <div className="animate-spin rounded-full h-4 w-4 border-2 border-gray-500 border-t-transparent" />
-                    Cargando modelo...
-                  </>
-                ) : (
-                  'Ver en 3D'
-                )}
-              </button>
+              {/* 3-D viewer */}
+              {isLoading3D && isLoadingMinimized ? (
+                // While downloading in background: show expand button
+                <button
+                  onClick={() => setIsLoadingMinimized(false)}
+                  className="w-full py-3.5 bg-blue-50 border border-blue-200 text-blue-700 rounded-2xl font-medium text-base flex items-center justify-center gap-2"
+                >
+                  <div className="animate-spin rounded-full h-4 w-4 border-2 border-blue-500 border-t-transparent" />
+                  {downloadProgress ? `Descargando... ${downloadProgress.percent}%` : 'Procesando...'}
+                </button>
+              ) : (
+                <button
+                  onClick={initViewerFallback}
+                  disabled={isLoading3D}
+                  className="w-full py-3.5 bg-white border border-gray-300 text-gray-700 rounded-2xl font-medium text-base active:bg-gray-50 disabled:opacity-60"
+                >
+                  Ver en 3D
+                </button>
+              )}
             </div>
           </main>
+
+          {/* ── Minimized download banner (background mode) ── */}
+          {isLoading3D && isLoadingMinimized && downloadProgress && (
+            <div className="shrink-0 bg-blue-50 border-t border-blue-100 px-4 py-3">
+              <div className="flex items-center justify-between mb-2">
+                <div className="flex items-center gap-2 min-w-0">
+                  {downloadProgress.phase === 'downloading' ? (
+                    <svg className="w-4 h-4 text-blue-600 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5M16.5 12L12 16.5m0 0L7.5 12m4.5 4.5V3" />
+                    </svg>
+                  ) : (
+                    <div className="animate-spin rounded-full h-4 w-4 border-2 border-blue-600 border-t-transparent shrink-0" />
+                  )}
+                  <span className="text-sm font-medium text-blue-900 truncate">
+                    {downloadProgress.phase === 'downloading'
+                      ? `Descargando modelo... ${downloadProgress.percent}%`
+                      : 'Procesando modelo 3D...'}
+                  </span>
+                </div>
+                <div className="flex items-center gap-3 shrink-0 ml-2">
+                  {downloadProgress.phase === 'downloading' && isFinite(downloadProgress.etaSeconds) && downloadProgress.etaSeconds > 0 && (
+                    <span className="text-xs text-blue-600 whitespace-nowrap">~{formatETA(downloadProgress.etaSeconds)}</span>
+                  )}
+                  <button
+                    onClick={() => setIsLoadingMinimized(false)}
+                    className="text-xs text-blue-700 font-semibold"
+                  >
+                    Ver
+                  </button>
+                  <button
+                    onClick={cancelDownload}
+                    className="text-xs text-red-500 font-medium"
+                  >
+                    Cancelar
+                  </button>
+                </div>
+              </div>
+              <div className="w-full bg-blue-100 rounded-full h-1.5">
+                <div
+                  className="bg-blue-600 h-1.5 rounded-full transition-all duration-500"
+                  style={{ width: `${downloadProgress.percent}%` }}
+                />
+              </div>
+            </div>
+          )}
 
           {/* Footer */}
           <footer className="bg-white border-t px-5 py-3 shrink-0">
@@ -846,6 +1006,99 @@ export default function ExperiencePage() {
             <div className="w-2 h-2 bg-blue-500 rounded-full animate-bounce" style={{ animationDelay: '0ms' }} />
             <div className="w-2 h-2 bg-blue-500 rounded-full animate-bounce" style={{ animationDelay: '150ms' }} />
             <div className="w-2 h-2 bg-blue-500 rounded-full animate-bounce" style={{ animationDelay: '300ms' }} />
+          </div>
+        </div>
+      )}
+
+      {/* ══════════════════════════════════════════════════════
+          3D LOADING — full-screen overlay while downloading model
+          Only shows when NOT minimized to background.
+          ══════════════════════════════════════════════════════ */}
+      {isLoading3D && !isLoadingMinimized && downloadProgress && (
+        <div className="absolute inset-0 z-30 flex flex-col items-center justify-center bg-gray-950 px-6">
+          {/* Icon */}
+          <div className="mb-8 relative flex items-center justify-center">
+            <div className="absolute w-28 h-28 rounded-full border border-blue-500/20 animate-ping" />
+            <div className="w-24 h-24 rounded-full bg-gray-800 border border-gray-700 flex items-center justify-center shadow-xl">
+              {downloadProgress.phase === 'downloading' ? (
+                <svg className="w-10 h-10 text-blue-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                  <path strokeLinecap="round" strokeLinejoin="round"
+                    d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5M16.5 12L12 16.5m0 0L7.5 12m4.5 4.5V3" />
+                </svg>
+              ) : (
+                <svg className="w-10 h-10 text-blue-400 animate-spin" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                  <path strokeLinecap="round" strokeLinejoin="round"
+                    d="M10.343 3.94c.09-.542.56-.94 1.11-.94h1.093c.55 0 1.02.398 1.11.94l.149.894c.07.424.384.764.78.93.398.164.855.142 1.205-.108l.737-.527a1.125 1.125 0 011.45.12l.773.774c.39.389.44 1.002.12 1.45l-.527.737c-.25.35-.272.806-.107 1.204.165.397.505.71.93.78l.893.15c.543.09.94.56.94 1.109v1.094c0 .55-.397 1.02-.94 1.11l-.893.149c-.425.07-.765.383-.93.78-.165.398-.143.854.107 1.204l.527.738c.32.447.269 1.06-.12 1.45l-.774.773a1.125 1.125 0 01-1.449.12l-.738-.527c-.35-.25-.806-.272-1.203-.107-.397.165-.71.505-.781.929l-.149.894c-.09.542-.56.94-1.11.94h-1.094c-.55 0-1.019-.398-1.11-.94l-.148-.894c-.071-.424-.384-.764-.781-.93-.398-.164-.854-.142-1.204.108l-.738.527c-.447.32-1.06.269-1.45-.12l-.773-.774a1.125 1.125 0 01-.12-1.45l.527-.737c.25-.35.273-.806.108-1.204-.165-.397-.505-.71-.93-.78l-.894-.15c-.542-.09-.94-.56-.94-1.109v-1.094c0-.55.398-1.02.94-1.11l.894-.149c.424-.07.765-.383.93-.78.165-.398.143-.854-.108-1.204l-.526-.738a1.125 1.125 0 01.12-1.45l.773-.773a1.125 1.125 0 011.45-.12l.737.527c.35.25.807.272 1.204.107.397-.165.71-.505.78-.929l.15-.894z" />
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                </svg>
+              )}
+            </div>
+          </div>
+
+          {/* Title */}
+          <h2 className="text-white text-xl font-bold mb-1 text-center">
+            {downloadProgress.phase === 'downloading' ? 'Descargando modelo 3D' : 'Procesando modelo'}
+          </h2>
+
+          {/* Context message */}
+          <p className="text-gray-400 text-sm text-center mb-6 max-w-xs leading-relaxed">
+            {downloadProgress.phase === 'downloading'
+              ? 'El modelo contiene geometría de alta resolución. La descarga puede tardar varios minutos según la velocidad de la red.'
+              : 'Procesando geometría del modelo...'}
+          </p>
+
+          {/* Progress bar */}
+          {downloadProgress.phase === 'downloading' ? (
+            <>
+              <div className="w-full max-w-xs mb-3">
+                <div className="flex justify-between text-xs text-gray-400 mb-1.5">
+                  <span className="font-medium text-white text-base">{downloadProgress.percent}%</span>
+                  <span>
+                    {downloadProgress.totalMB > 0
+                      ? `${downloadProgress.loadedMB.toFixed(0)} / ${downloadProgress.totalMB.toFixed(0)} MB`
+                      : `${downloadProgress.loadedMB.toFixed(1)} MB`}
+                  </span>
+                </div>
+                <div className="w-full bg-gray-800 rounded-full h-2.5">
+                  <div
+                    className="bg-blue-500 h-2.5 rounded-full transition-all duration-300"
+                    style={{ width: `${downloadProgress.percent}%` }}
+                  />
+                </div>
+              </div>
+              {/* Speed + ETA */}
+              <div className="flex items-center gap-4 text-xs text-gray-500 mb-8">
+                {downloadProgress.speedMBs > 0 && (
+                  <span>{formatSpeed(downloadProgress.speedMBs)}</span>
+                )}
+                {isFinite(downloadProgress.etaSeconds) && downloadProgress.etaSeconds > 0 && (
+                  <span>Faltan ~{formatETA(downloadProgress.etaSeconds)}</span>
+                )}
+              </div>
+            </>
+          ) : (
+            <div className="mb-8 flex items-center gap-2 text-gray-400 text-sm">
+              <div className="animate-spin rounded-full h-4 w-4 border-2 border-gray-600 border-t-blue-400" />
+              <span>Esto puede tardar unos segundos...</span>
+            </div>
+          )}
+
+          {/* Actions */}
+          <div className="w-full max-w-xs flex flex-col gap-3">
+            {downloadProgress.phase === 'downloading' && (
+              <button
+                onClick={() => setIsLoadingMinimized(true)}
+                className="w-full py-3 bg-blue-600 text-white rounded-2xl font-semibold text-sm active:bg-blue-700"
+              >
+                Continuar en segundo plano
+              </button>
+            )}
+            <button
+              onClick={cancelDownload}
+              className="w-full py-3 bg-gray-800 text-gray-400 rounded-2xl font-medium text-sm active:bg-gray-700"
+            >
+              Cancelar
+            </button>
           </div>
         </div>
       )}
