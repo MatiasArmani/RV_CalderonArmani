@@ -206,6 +206,19 @@ export default function ExperiencePage() {
     }
   }, [])
 
+  // ── Preload Babylon/XR modules while user reads the ready screen ───────────
+  // WebXR's requestSession must be called within ~1-2s of a user gesture.
+  // Dynamic imports take time on first load; preloading here ensures they
+  // are in the browser module cache by the time the user taps "Iniciar AR".
+  useEffect(() => {
+    if (!isARSupported) return
+    import('@babylonjs/core').catch(() => {})
+    import('@babylonjs/loaders/glTF').catch(() => {})
+    import('@babylonjs/core/Loading/sceneLoader').catch(() => {})
+    import('@babylonjs/core/XR/features/WebXRHitTest').catch(() => {})
+    import('@babylonjs/core/XR/features/WebXRDOMOverlay').catch(() => {})
+  }, [isARSupported])
+
   // ── Cleanup ───────────────────────────────────────────────
   const cleanup = useCallback(() => {
     if (joystickAnimFrameRef.current) {
@@ -1099,7 +1112,7 @@ export default function ExperiencePage() {
               </div>
               <div>
                 <p className="font-semibold text-gray-900 text-sm">AR no pudo iniciarse</p>
-                <p className="text-gray-500 text-xs mt-0.5">Asegúrate de estar en una red segura (HTTPS)</p>
+                <p className="text-gray-500 text-xs mt-0.5">Si el error persiste, probá desde una conexión HTTPS</p>
               </div>
             </div>
             {/* Error técnico — útil para diagnóstico */}
