@@ -4,6 +4,21 @@ import { useEffect, useState, useRef, useCallback } from 'react'
 import { useParams } from 'next/navigation'
 import { getExperience, startVisit, endVisit, PublicApiError, type PublicExperience, type PublicSubmodel } from '@/lib/api/public'
 
+// ── model-viewer web component type (iOS Quick Look AR) ────────────────────
+declare global {
+  namespace JSX {
+    interface IntrinsicElements {
+      'model-viewer': React.DetailedHTMLProps<React.HTMLAttributes<HTMLElement>, HTMLElement> & {
+        src?: string
+        ar?: boolean
+        'ar-modes'?: string
+        'camera-controls'?: boolean
+        'shadow-intensity'?: string
+      }
+    }
+  }
+}
+
 type AppState = 'loading' | 'ready' | 'error' | 'ar-scanning' | 'ar-placed' | 'viewer-fallback'
 
 // ── IndexedDB GLB cache ──────────────────────────────────────────────────────
@@ -104,6 +119,9 @@ export default function ExperiencePage() {
   const placedPositionRef = useRef<{ x: number; y: number; z: number } | null>(null)
   const overlayRef = useRef<HTMLDivElement>(null)
 
+  // ── iOS model-viewer ref (Quick Look AR) ─────────────────
+  const modelViewerRef = useRef<HTMLElement & { activateAR: () => void } | null>(null)
+
   // ── Download tracking refs ────────────────────────────────
   const xhrRef = useRef<XMLHttpRequest | null>(null)
   const blobUrlRef = useRef<string | null>(null)
@@ -196,7 +214,9 @@ export default function ExperiencePage() {
 
   // ── Device / AR detection ─────────────────────────────────
   useEffect(() => {
-    const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent)
+    // iPadOS 13+ reports itself as "Mac" in the user agent — detect via touch support
+    const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) ||
+      (/Mac/.test(navigator.userAgent) && navigator.maxTouchPoints > 1)
     setIsIOSDevice(isIOS)
     if ('xr' in navigator && !isIOS) {
       ;(navigator as Navigator & { xr: XRSystem }).xr
@@ -218,6 +238,18 @@ export default function ExperiencePage() {
     import('@babylonjs/core/XR/features/WebXRHitTest').catch(() => {})
     import('@babylonjs/core/XR/features/WebXRDOMOverlay').catch(() => {})
   }, [isARSupported])
+
+  // ── Load model-viewer script for iOS Quick Look AR ────────────────────────
+  // iOS Safari doesn't support WebXR. Google's model-viewer web component
+  // converts GLB → USDZ client-side (WebAssembly) and opens Apple Quick Look.
+  useEffect(() => {
+    if (!isIOSDevice) return
+    const script = document.createElement('script')
+    script.type = 'module'
+    script.src = 'https://ajax.googleapis.com/ajax/libs/model-viewer/3.5.0/model-viewer.min.js'
+    document.head.appendChild(script)
+    return () => { if (document.head.contains(script)) document.head.removeChild(script) }
+  }, [isIOSDevice])
 
   // ── Cleanup ───────────────────────────────────────────────
   const cleanup = useCallback(() => {
@@ -935,6 +967,18 @@ export default function ExperiencePage() {
         style={{ touchAction: 'none' }}
       />
 
+      {/* ── model-viewer (iOS Quick Look AR) — visually hidden, always in DOM ── */}
+      {isIOSDevice && experience && (
+        // @ts-expect-error — model-viewer is a web component loaded via CDN script
+        <model-viewer
+          ref={modelViewerRef}
+          src={experience.assets.glbUrl}
+          ar
+          ar-modes="quick-look"
+          style={{ position: 'absolute', width: 0, height: 0, opacity: 0, pointerEvents: 'none' }}
+        />
+      )}
+
       {/* ══════════════════════════════════════════════════════
           READY STATE — opaque cover with preview + buttons
           ══════════════════════════════════════════════════════ */}
@@ -959,7 +1003,7 @@ export default function ExperiencePage() {
               {experience.product.name}
             </h2>
             <p className="text-gray-500 text-sm text-center mb-8 max-w-xs">
-              {isARSupported || (isIOSDevice && experience.assets.usdzUrl)
+              {isARSupported || isIOSDevice
                 ? 'Coloca este modelo a escala real en tu entorno'
                 : 'Visualiza este modelo en 3D'}
             </p>
@@ -975,14 +1019,28 @@ export default function ExperiencePage() {
                   Iniciar AR
                 </button>
               )}
-              {isIOSDevice && experience.assets.usdzUrl && (
-                <a
-                  href={experience.assets.usdzUrl}
-                  rel="ar"
-                  className="w-full py-4 bg-blue-600 text-white rounded-2xl font-semibold text-base text-center shadow-md"
+              {isIOSDevice && (
+                <button
+                  onClick={() => {
+                    const mv = modelViewerRef.current
+                    if (mv && typeof mv.activateAR === 'function') {
+                      mv.activateAR()
+                    } else {
+                      // model-viewer script still loading — try once loaded
+                      const check = setInterval(() => {
+                        const mv2 = modelViewerRef.current
+                        if (mv2 && typeof mv2.activateAR === 'function') {
+                          clearInterval(check)
+                          mv2.activateAR()
+                        }
+                      }, 200)
+                      setTimeout(() => clearInterval(check), 5000)
+                    }
+                  }}
+                  className="w-full py-4 bg-blue-600 text-white rounded-2xl font-semibold text-base shadow-md active:bg-blue-700"
                 >
-                  Ver en AR
-                </a>
+                  Iniciar AR
+                </button>
               )}
 
               {/* 3-D viewer */}
