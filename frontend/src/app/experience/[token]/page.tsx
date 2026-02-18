@@ -20,6 +20,7 @@ export default function ExperiencePage() {
   const [modelReady, setModelReady] = useState(false)
   const [isStartingAR, setIsStartingAR] = useState(false)
   const [isSheetMinimized, setIsSheetMinimized] = useState(false)
+  const [isLoading3D, setIsLoading3D] = useState(false)
 
   // Submodel selector state
   const [selectedSubmodel, setSelectedSubmodel] = useState<string | null>(null) // null = base model
@@ -163,29 +164,37 @@ export default function ExperiencePage() {
   // ── 3-D viewer fallback (orbit, no AR) ────────────────────
   const initViewerFallback = useCallback(async () => {
     if (!experience || !canvasRef.current) return
+
+    setIsLoading3D(true)
+
+    // Dispose any existing Babylon engine/scene before creating a new one.
+    // This is critical when AR failed and left a render loop running on the canvas;
+    // without cleanup, creating a second engine on the same canvas fails silently.
+    cleanup()
+
     const canvas = canvasRef.current
 
-    const { Engine, Scene, ArcRotateCamera, HemisphericLight, Vector3, Color4 } =
-      await import('@babylonjs/core')
-    await import('@babylonjs/loaders/glTF')
-    const { SceneLoader } = await import('@babylonjs/core/Loading/sceneLoader')
-
-    const engine = new Engine(canvas, true, { preserveDrawingBuffer: true, stencil: true })
-    engineRef.current = engine
-
-    const scene = new Scene(engine)
-    sceneRef.current = scene
-    scene.clearColor = new Color4(0.95, 0.95, 0.95, 1)
-
-    const camera = new ArcRotateCamera('cam', Math.PI / 2, Math.PI / 3, 10, Vector3.Zero(), scene)
-    camera.attachControl(canvas, true)
-    camera.lowerRadiusLimit = 0.5
-    camera.upperRadiusLimit = 100
-    camera.wheelDeltaPercentage = 0.01
-
-    new HemisphericLight('light', new Vector3(0, 1, 0), scene).intensity = 1.2
-
     try {
+      const { Engine, Scene, ArcRotateCamera, HemisphericLight, Vector3, Color4 } =
+        await import('@babylonjs/core')
+      await import('@babylonjs/loaders/glTF')
+      const { SceneLoader } = await import('@babylonjs/core/Loading/sceneLoader')
+
+      const engine = new Engine(canvas, true, { preserveDrawingBuffer: true, stencil: true })
+      engineRef.current = engine
+
+      const scene = new Scene(engine)
+      sceneRef.current = scene
+      scene.clearColor = new Color4(0.95, 0.95, 0.95, 1)
+
+      const camera = new ArcRotateCamera('cam', Math.PI / 2, Math.PI / 3, 10, Vector3.Zero(), scene)
+      camera.attachControl(canvas, true)
+      camera.lowerRadiusLimit = 0.5
+      camera.upperRadiusLimit = 100
+      camera.wheelDeltaPercentage = 0.01
+
+      new HemisphericLight('light', new Vector3(0, 1, 0), scene).intensity = 1.2
+
       const { meshes } = await SceneLoader.ImportMeshAsync('', '', experience.assets.glbUrl, scene)
       if (meshes.length > 0) {
         let min = new Vector3(Infinity, Infinity, Infinity)
@@ -200,18 +209,20 @@ export default function ExperiencePage() {
         camera.target = min.add(max).scale(0.5)
         camera.radius = Math.max(...[max.x - min.x, max.y - min.y, max.z - min.z]) * 2
       }
+
+      setIsLoading3D(false)
       setAppState('viewer-fallback')
+      engine.runRenderLoop(() => scene.render())
+      window.addEventListener('resize', () => engine.resize())
     } catch (err) {
+      setIsLoading3D(false)
       setError({
         code: 'LOAD_ERROR',
         message: `Error al cargar el modelo 3D: ${err instanceof Error ? err.message : String(err)}`,
       })
       setAppState('error')
     }
-
-    engine.runRenderLoop(() => scene.render())
-    window.addEventListener('resize', () => engine.resize())
-  }, [experience])
+  }, [experience, cleanup])
 
   // ── AR session ────────────────────────────────────────────
   const startARSession = useCallback(async () => {
@@ -265,12 +276,25 @@ export default function ExperiencePage() {
     // Loading a large GLB first can exceed the gesture timeout (~5 s),
     // causing enterXRAsync to be silently rejected → fallback to 3D.
     setModelReady(false)
+
+    // Helper: rejects after ms milliseconds to prevent indefinite hangs
+    const withTimeout = <T>(promise: Promise<T>, ms: number): Promise<T> =>
+      Promise.race([
+        promise,
+        new Promise<never>((_, reject) =>
+          setTimeout(() => reject(new Error(`Tiempo de espera agotado (${ms / 1000}s)`)), ms)
+        ),
+      ])
+
     try {
-      const xr = await BABYLON.WebXRDefaultExperience.CreateAsync(scene, {
-        disableDefaultUI: true,
-        uiOptions: { sessionMode: 'immersive-ar' },
-        optionalFeatures: true,
-      })
+      const xr = await withTimeout(
+        BABYLON.WebXRDefaultExperience.CreateAsync(scene, {
+          disableDefaultUI: true,
+          uiOptions: { sessionMode: 'immersive-ar' },
+          optionalFeatures: true,
+        }),
+        20000
+      )
       xrRef.current = xr
 
       const hitTest = xr.baseExperience.featuresManager.enableFeature(
@@ -322,8 +346,8 @@ export default function ExperiencePage() {
         )
       }
 
-      // Enter AR
-      await xr.baseExperience.enterXRAsync('immersive-ar', 'unbounded')
+      // Enter AR — with timeout to avoid hanging indefinitely on unsupported devices
+      await withTimeout(xr.baseExperience.enterXRAsync('immersive-ar', 'unbounded'), 15000)
       setIsStartingAR(false)
       setAppState('ar-scanning')
 
@@ -722,7 +746,8 @@ export default function ExperiencePage() {
               {isARSupported && !isIOSDevice && (
                 <button
                   onClick={startARSession}
-                  className="w-full py-4 bg-blue-600 text-white rounded-2xl font-semibold text-base shadow-md active:bg-blue-700"
+                  disabled={isLoading3D}
+                  className="w-full py-4 bg-blue-600 text-white rounded-2xl font-semibold text-base shadow-md active:bg-blue-700 disabled:opacity-60"
                 >
                   Iniciar AR
                 </button>
@@ -740,9 +765,17 @@ export default function ExperiencePage() {
               {/* 3-D viewer (always available as secondary) */}
               <button
                 onClick={initViewerFallback}
-                className="w-full py-3.5 bg-white border border-gray-300 text-gray-700 rounded-2xl font-medium text-base active:bg-gray-50"
+                disabled={isLoading3D}
+                className="w-full py-3.5 bg-white border border-gray-300 text-gray-700 rounded-2xl font-medium text-base active:bg-gray-50 disabled:opacity-60 flex items-center justify-center gap-2"
               >
-                Ver en 3D
+                {isLoading3D ? (
+                  <>
+                    <div className="animate-spin rounded-full h-4 w-4 border-2 border-gray-500 border-t-transparent" />
+                    Cargando modelo...
+                  </>
+                ) : (
+                  'Ver en 3D'
+                )}
               </button>
             </div>
           </main>
