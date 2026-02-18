@@ -559,9 +559,22 @@ export default function ExperiencePage() {
     }
 
     // Load model in background — AR camera is already rendering.
-    // The user scans for surfaces while the model downloads.
+    // Check IndexedDB cache first to avoid re-downloading large files.
     try {
-      const { meshes } = await SceneLoader.ImportMeshAsync('', '', experience.assets.glbUrl, scene)
+      const cachedBlob = await getCachedGlb(token)
+      let arBlob: Blob
+      if (cachedBlob) {
+        arBlob = cachedBlob
+      } else {
+        const resp = await fetch(experience.assets.glbUrl)
+        if (!resp.ok) throw new Error(`HTTP ${resp.status}`)
+        arBlob = await resp.blob()
+        cacheGlb(token, arBlob) // fire-and-forget
+      }
+      const arBlobUrl = URL.createObjectURL(arBlob)
+      const { meshes: arMeshes } = await SceneLoader.ImportMeshAsync('', '', arBlobUrl, scene, undefined, '.glb')
+      URL.revokeObjectURL(arBlobUrl)
+      const meshes = arMeshes
       if (meshes.length > 0) {
         const root = meshes[0]
         root.setEnabled(false)
@@ -583,7 +596,7 @@ export default function ExperiencePage() {
       })
       setAppState('error')
     }
-  }, [experience, cleanup, initViewerFallback])
+  }, [experience, token, cleanup, initViewerFallback])
 
   // ── Place model at last hit position ──────────────────────
   const placeModel = useCallback(async () => {
