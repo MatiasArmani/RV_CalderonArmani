@@ -288,7 +288,7 @@ export default function ExperiencePage() {
 
       new HemisphericLight('light', new Vector3(0, 1, 0), scene).intensity = 1.2
 
-      const { meshes } = await SceneLoader.ImportMeshAsync('', '', blobUrl, scene)
+      const { meshes } = await SceneLoader.ImportMeshAsync('', '', blobUrl, scene, undefined, '.glb')
 
       // Release the blob URL — model is now in GPU memory
       URL.revokeObjectURL(blobUrl)
