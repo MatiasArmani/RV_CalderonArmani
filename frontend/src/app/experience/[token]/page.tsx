@@ -225,14 +225,13 @@ export default function ExperiencePage() {
         camera.upperRadiusLimit = modelSize * 15
 
         // Zoom speed: percentage of current radius per step (auto-scales with zoom level).
-        // 8% feels natural on mobile pinch and mouse wheel.
-        camera.wheelDeltaPercentage = 0.08
-        camera.pinchDeltaPercentage = 0.08
+        camera.wheelDeltaPercentage = 0.05
+        camera.pinchDeltaPercentage = 0.05
 
         // Pan speed: panningSensibility = pixels required to pan 1 world unit.
-        // Formula: sensibility = 500 / modelSize → a ~500px swipe pans ≈ one model width.
+        // Formula: sensibility = 1200 / modelSize → a ~1200px swipe pans ≈ one model width.
         // Clamped so tiny models don't feel too slow and huge models don't feel too jittery.
-        camera.panningSensibility = Math.min(Math.max(1, 500 / modelSize), 800)
+        camera.panningSensibility = Math.min(Math.max(1, 1200 / modelSize), 1200)
       }
 
       setIsLoading3D(false)
