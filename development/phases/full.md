@@ -176,11 +176,13 @@ Extiende el MVP manteniendo **KISS/YAGNI** y sin introducir arquitectura inneces
   - Validaciones de payload estrictas
   - Pendiente: Auditoría completa de logs
 
-🔄 **Etapa 10** - Performance UX (PARCIALMENTE COMPLETADA)
-  - USDZ conversion implementada
-  - Viewer optimizado para mobile
-  - Límite de archivos ampliado a 500MB con timeout de 30 min
-  - Pendiente: Optimización automática de GLB (Draco compression opcional)
+✅ **Etapa 10** - Performance UX (COMPLETADA)
+  - Conversión GLB→USDZ server-side implementada y funcional
+  - Viewer 3D con cámara adaptativa al tamaño real del modelo
+  - Caché IndexedDB para GLB (7 días TTL)
+  - Descarga con progreso en tiempo real (XHR + velocidad + ETA)
+  - iOS Quick Look AR completamente funcional
+  - Bug fixes críticos de estabilidad
 
 ---
 
@@ -215,4 +217,78 @@ Durante el desarrollo se implementaron features adicionales para mejorar la expe
   - Instrucciones contextuales adaptativas
   - Feedback visual durante procesamiento
   - Timeout handling robusto
+
+---
+
+## Sesión 2025-02 — iOS AR + Estabilidad (Cambios Completados)
+
+### iOS Quick Look AR (Apple) ✅
+
+**Problema raíz:** iOS Safari no soporta WebXR. La librería model-viewer convierte GLB→USDZ vía WebAssembly en el cliente, pero genera `blob:` URLs sin extensión `.usdz`. iOS 17+ Safari interpreta ese click como navegación → la página se recargaba.
+
+**Solución implementada:**
+
+1. **Conversión server-side GLB→USDZ** (`backend/src/modules/assets/usdz-converter.ts`):
+   - Three.js `GLTFLoader` + `USDZExporter` corriendo en Node.js 20
+   - Polyfills DOM completos: `document.createElement`, `Blob` (con captura de buffer), `URL.createObjectURL` (retorna data URI para node-canvas), `URL.revokeObjectURL`, `canvas.toBlob` (via `canvas.toBuffer()`)
+   - `maxTextureSize: 2048` para limitar tamaño del USDZ resultante
+   - Fuerza `material.side = FrontSide` en todos los materiales (USDZ no soporta DoubleSide)
+   - Patrón **fire-and-forget**: se ejecuta DESPUÉS de que el GLB está marcado `READY`, sin bloquear el HTTP response
+   - En caso de fallo, el GLB sigue disponible (best-effort)
+
+2. **Asset kind `USDZ`** ya existente en Prisma schema — ahora completamente funcional:
+   - Stored en S3: `{companyId}/versions/{versionId}/usdz/model_{assetId}.usdz`
+   - Content-Type: `model/vnd.usdz+zip`
+   - Presigned URL con `Content-Disposition: inline; filename="model.usdz"` (ayuda a Quick Look a identificar el archivo)
+
+3. **Frontend model-viewer** (`frontend/src/app/experience/[token]/page.tsx`):
+   - Atributo `ios-src={usdzUrl}` → Quick Look usa la URL real de S3, no un blob
+   - `reveal="manual"` → GLB carga e inicia USDZ convert inmediatamente, pero canvas 3D NO se renderiza (no cubre el botón)
+   - `slot="ar-button"` transparente sobre el botón visual — el tap del usuario llega directamente al anchor `<a rel="ar">` interno de model-viewer
+   - `mvReady` state: botón muestra "Preparando..." con spinner hasta que model-viewer dispara `load`, luego "Iniciar AR"
+   - Poster 1×1 GIF transparente + `--poster-color: transparent` para que no se vea nada del canvas
+
+### Bug Fixes Críticos ✅
+
+**Bug 1 — "Ver en 3D" sin feedback visual:**
+- Causa: `initViewerFallback()` era async pero no mostraba ningún indicador de carga
+- Fix: El botón se deshabilita y muestra spinner inmediatamente al hacer click
+
+**Bug 2 — AR fallback a 3D causaba engine conflict:**
+- Causa: Al fallar WebXR, `initViewerFallback()` se llamaba sin limpiar el engine de AR. El engine de AR seguía activo en el canvas con su render loop, y crear un segundo Babylon engine fallaba silenciosamente
+- Fix: `initViewerFallback()` llama `cleanup()` al inicio, descartando el engine anterior antes de crear el nuevo
+
+**Bug 3 — "Iniciar AR" se quedaba cargando indefinidamente:**
+- Causa: `WebXRDefaultExperience.CreateAsync()` y `enterXRAsync()` podían quedar en estado indefinido (sin resolve ni reject) en dispositivos sin HTTPS o sin soporte real de WebXR
+- Fix: Se agregó `withTimeout()` de 20s para `CreateAsync` y 15s para `enterXRAsync`. Si el timeout se supera, cae al catch y llama `initViewerFallback()`
+
+### Mejoras al Viewer 3D ✅
+
+**Problema raíz:** Modelos industriales se exportan desde CAD (SolidWorks, Fusion) en centímetros o milímetros. Los valores fijos de cámara eran completamente desproporcionados.
+
+**Solución:** Todos los parámetros de cámara se calculan en función de `modelSize` (dimensión máxima del bounding box):
+
+| Parámetro | Antes | Ahora |
+|-----------|-------|-------|
+| `upperRadiusLimit` | 100 (fijo) | `modelSize × 15` |
+| `lowerRadiusLimit` | (no definido) | `modelSize × 0.05` |
+| `panningSensibility` | 1000 (default) | `max(1, 1200 / modelSize)` |
+| `wheelDeltaPercentage` | 0.01 | `0.08` |
+| `pinchDeltaPercentage` | (no definido) | `0.08` |
+| `camera.inertia` | 0.9 (default) | `0.75` |
+
+### Caché IndexedDB para GLB ✅
+
+**Implementación:**
+- Base de datos: `rv-glb-cache`, object store `glbs`, keyPath `token`
+- TTL: 7 días (604800 segundos)
+- Primera carga: descarga con progreso (XHR) → guarda blob en IndexedDB
+- Cargas siguientes: detecta blob en caché → salta directamente a "parseando modelo"
+- Fallo silencioso: si IndexedDB no está disponible (modo incógnito, etc.), descarga normal
+
+**Descarga con progreso real:**
+- XHR en lugar de fetch para acceso a `onprogress`
+- Muestra: porcentaje, MB descargados/totales, velocidad (MB/s), ETA
+- Botón "Continuar en segundo plano" → minimiza a banner en footer
+- Botón "Cancelar" → abort del XHR + revoke de blob URL
 ```

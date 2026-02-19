@@ -515,26 +515,45 @@ Define pantallas, flujos, estados UI, permisos y endpoints consumidos por cada p
 4. Si success:
    - `POST /api/public/visits/start` con `{ shareToken, device: { ua, os, isMobile } }`
    - Guarda `visitId` en state
-   - Descarga GLB desde `assets.glbUrl` (signed URL)
-   - Inicializa Babylon.js viewer:
-     - Orbit controls (touch-friendly)
-     - Loading progress bar
-     - Error fallback si falla carga
-   - Muestra info básica:
-     - Nombre producto + versión
-     - Botón "Ver en AR" (si disponible)
-5. Detección AR:
-   - **Mobile iOS + Safari**: si existe `assets.usdzUrl` → muestra botón "Ver en AR" (Quick Look)
-   - **Mobile Android + Chrome**: si WebXR disponible → muestra botón "Ver en AR" (WebXR)
-   - **Desktop o no compatible**: oculta botón AR
-6. Click "Ver en AR":
-   - Si iOS: `<a rel="ar" href="usdzUrl">` (Quick Look nativo)
-   - Si Android: inicia sesión WebXR
-   - Marca `usedAR = true` en state
-7. Usuario cierra/sale:
-   - `beforeunload` o `visibilitychange`:
-   - Calcula `durationMs` (timestamp end - start)
-   - `POST /api/public/visits/end` con `{ visitId, durationMs, usedAR }`
+   - Detección de dispositivo → flujo diverge (ver abajo)
+
+5. Detección AR y flujo según dispositivo:
+
+   **Mobile iOS (iPad/iPhone):**
+   - Carga script `model-viewer@3.5.0` de Google CDN (módulo, dinámico)
+   - Muestra botón visual "Preparando..." con spinner
+   - `<model-viewer>` invisible sobre el botón (full-cover, zIndex superior):
+     - `src={glbUrl}` → descarga GLB e inicia conversión USDZ client-side
+     - `ios-src={usdzUrl}` → si existe USDZ server-side, lo usa directamente (evita blob URL)
+     - `reveal="manual"` → GLB carga pero canvas 3D NO se renderiza
+     - `slot="ar-button"` → botón transparente que recibe el tap del usuario
+   - Cuando model-viewer dispara `load` → botón cambia a "Iniciar AR"
+   - Tap en botón → model-viewer hace click interno en `<a rel="ar" href="usdzUrl">` → abre Quick Look nativo de Apple
+   - iOS Quick Look descarga el USDZ y muestra la vista AR con la cámara del dispositivo
+
+   **Mobile Android (Chrome + WebXR):**
+   - `navigator.xr.isSessionSupported('immersive-ar')` → si true, muestra botón "Iniciar AR"
+   - Click → inicia sesión WebXR vía Babylon.js
+   - Descarga GLB en background (IndexedDB cache → si existe, salta descarga)
+   - Muestra reticle de detección de superficie + instrucciones
+   - Tap en superficie → coloca modelo a escala real
+   - Controles disponibles: rotation slider, joystick de movimiento, reposicionar
+
+   **Desktop o sin soporte AR:**
+   - Solo muestra "Ver en 3D" → Babylon.js orbit viewer
+
+6. GLB caching (IndexedDB):
+   - Primera carga: descarga vía XHR con barra de progreso (%, MB/s, ETA)
+   - Guarda blob en IndexedDB (TTL: 7 días, key: share token)
+   - Cargas posteriores: sirve desde caché → salta directamente a parsing
+
+7. Descarga 3D en background:
+   - Botón "Continuar en segundo plano" → minimiza overlay de descarga
+   - Banner en footer con progreso resumido + botón "Ver" y "Cancelar"
+
+8. Usuario cierra/sale:
+   - `beforeunload` / `pagehide`: `navigator.sendBeacon()` con visitId + durationMs + usedAR
+   - Unmount SPA: `endVisit()` async
 
 **Endpoints**:
 - `GET /api/public/experience/:token`
@@ -542,12 +561,11 @@ Define pantallas, flujos, estados UI, permisos y endpoints consumidos por cada p
 - `POST /api/public/visits/end`
 
 **Componentes clave**:
-- `PublicLayout`: sin nav, solo logo + info mínima
-- `BabylonViewer`: canvas 3D + controls
-- `ARButton`: detección + CTA adaptado (iOS/Android)
-- `LoadingOverlay`: progress + branding
-- `ErrorScreen`: mensajes específicos por tipo de error
-- `ProductInfo`: nombre + versión (minimal)
+- `ExperiencePage`: componente único con toda la lógica (sin layout separado)
+- Canvas Babylon.js siempre montado, cubierto por overlays según estado
+- model-viewer (web component): solo en iOS, invisible, actúa como trigger Quick Look
+- Botón iOS: visual layer (pointer-events none) + model-viewer layer (pointer-events, captura tap)
+- `AppState`: `'loading' | 'ready' | 'error' | 'ar-scanning' | 'ar-placed' | 'viewer-fallback'`
 
 ---
 

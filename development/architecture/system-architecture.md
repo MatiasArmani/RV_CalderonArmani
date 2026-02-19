@@ -76,23 +76,29 @@ Todas las requests privadas:
 - el backend deriva `companyId` del token
 - filtra por `companyId` en DB
 
-### 3.3 Upload y procesamiento (MVP KISS)
-**Opción recomendada:** Signed URL
+### 3.3 Upload y procesamiento
+**Flujo implementado:** Signed URL + procesamiento síncrono con USDZ asíncrono
+
 1) FE: `POST /api/assets/upload-url`
 2) BE valida:
    - versión pertenece al tenant
-   - tamaño y tipo
-3) BE crea Asset (`PENDING_UPLOAD`) y retorna URL firmada
-4) FE sube GLB al storage
+   - tamaño (max 500 MB) y tipo (`model/gltf-binary`)
+3) BE crea Asset (`PENDING_UPLOAD`) y retorna URL firmada (30 min TTL)
+4) FE sube GLB directamente a S3 vía PUT
 5) FE: `POST /api/assets/complete`
-6) BE:
-   - marca `UPLOADED`
-   - ejecuta procesamiento dentro del backend
-   - guarda derivados y `READY/FAILED`
+6) BE (síncrono, bloquea el HTTP response):
+   - Descarga 12 bytes header del GLB vía S3 range request → valida magic bytes
+   - Genera thumbnail placeholder (512×512 JPEG)
+   - Sube thumbnail a S3
+   - Marca GLB como `READY` → responde al FE
+7) BE (fire-and-forget, no bloquea el HTTP response):
+   - Descarga GLB completo de S3
+   - Convierte GLB → USDZ via Three.js en Node.js (ver §3.5)
+   - Sube USDZ a S3 con `Content-Type: model/vnd.usdz+zip`
+   - Crea Asset `USDZ` con status `READY`
 
-> No se define infraestructura adicional.
-> Si el procesamiento resulta pesado, se optimiza dentro del mismo backend (timeouts, streaming, límites),
-> o se mueve a Fase 2 como extensión documentada.
+> El paso 7 puede tardar 10-60s dependiendo del tamaño del modelo.
+> Si falla, el GLB ya está `READY` → el frontend puede seguir funcionando con conversión client-side de model-viewer como fallback.
 
 ### 3.4 Experiencia pública (share)
 1) Usuario abre `/experience/:token`
@@ -103,9 +109,49 @@ Todas las requests privadas:
    - no expirado
    - no excede maxVisits
 4) BE retorna:
-   - metadata mínima
-   - URLs firmadas a assets
+   - metadata mínima (nombre producto, versión)
+   - URLs firmadas (1h TTL): `glbUrl`, `thumbUrl`, `usdzUrl` (null si USDZ aún no listo)
+   - `usdzUrl` incluye `Content-Disposition: inline; filename="model.usdz"` para Quick Look
 5) FE renderiza viewer y registra Visit start/end
+
+### 3.5 Pipeline GLB→USDZ (Node.js Server-side)
+
+**Módulo:** `backend/src/modules/assets/usdz-converter.ts`
+
+**Por qué server-side:** iOS 17+ Safari rechaza `blob:` URLs como trigger de Apple Quick Look (las trata como navegación normal → recarga la página). Se necesita una URL real con extensión `.usdz` en el path.
+
+**Stack:**
+- `three` (npm): `GLTFLoader` + `USDZExporter`
+- `canvas` (npm): node-canvas para operaciones de imagen sin browser real
+
+**Polyfills DOM necesarios en Node.js:**
+
+| API del browser | Polyfill en Node.js |
+|-----------------|---------------------|
+| `document.createElement('canvas')` | `createCanvas()` de node-canvas |
+| `document.createElement('img')` | `new Image()` de node-canvas |
+| `globalThis.Image` | `Image` de node-canvas |
+| `globalThis.HTMLCanvasElement` | constructor de node-canvas |
+| `globalThis.Blob` (wrapeado) | Node.js 20 Blob + wrapper que captura buffer raw |
+| `URL.createObjectURL(blob)` | Retorna `data:{type};base64,{b64}` (node-canvas lo entiende) |
+| `URL.revokeObjectURL()` | no-op |
+| `canvas.toBlob(cb, type)` | `cb(new Blob([canvas.toBuffer(type)], {type}))` |
+| `globalThis.OffscreenCanvas` | stub vacío |
+
+**Optimizaciones aplicadas:**
+- `maxTextureSize: 2048` → limita resolución de texturas en el USDZ
+- Fuerza `material.side = FrontSide` en toda la escena (USDZ no soporta DoubleSide)
+- Dispose de geometrías, materiales y texturas al finalizar (evita memory leaks)
+
+**Patrón fire-and-forget:**
+```typescript
+void (async () => {
+  // descarga GLB, convierte, sube USDZ
+  // si falla: solo logging, GLB sigue READY
+})()
+return toDTO(updated) // respuesta HTTP inmediata
+```
+
 
 ---
 
